@@ -13,7 +13,7 @@ The replacement will not depend on the original site, Cloudflare, GitHub publish
 - Preserve raw inputs, exact model requests, raw model responses, parsed results, timings, usage, and failures for model evaluation and debugging.
 - Publish complete daily data as stable JSON files for downstream agents.
 - Retain the existing Markdown representations as optional human-readable artifacts.
-- Run portably as a one-shot container with durable bind-mounted storage.
+- Run portably as a one-shot Podman container with durable bind-mounted storage.
 - Allow explicit, safe removal of intermediate run bundles after model behavior is accepted.
 
 ## Non-goals
@@ -27,10 +27,10 @@ The replacement will not depend on the original site, Cloudflare, GitHub publish
 
 ## Architecture
 
-The deployment unit is a one-shot Docker container. Each invocation fetches source data, performs inference, writes a retained run bundle incrementally, publishes final data only after successful completion, and exits. Scheduling remains a host responsibility:
+The deployment unit is a one-shot OCI container run with Podman. Each invocation fetches source data, performs inference, writes a retained run bundle incrementally, publishes final data only after successful completion, and exits. Scheduling remains a host responsibility:
 
-- Linux can use cron or a systemd timer.
-- macOS can use `launchd`.
+- Linux can use rootless Podman with cron or a systemd user timer.
+- macOS can use a Podman machine with `launchd`.
 - Both platforms invoke the same container command and mount the same `/data` contract.
 
 The default operational cadence is once per day around 07:00 in the host's local timezone. The scheduler configuration will document `America/New_York` explicitly where the scheduler supports a timezone setting.
@@ -137,22 +137,22 @@ Retained prompts make future model comparisons reproducible without refetching H
 
 ## Container Interface
 
-The repository will include a Dockerfile and Compose configuration for a service that mounts a host directory at `/data`. The default command performs one live daily run. Configuration is supplied through an ignored local environment file.
+The repository will include a Containerfile and Podman Compose configuration for a service that mounts a host directory at `/data`. The default command performs one live daily run. Configuration is supplied through an ignored local environment file.
 
 Representative commands:
 
 ```bash
 # Run one briefing now
-docker compose run --rm hn-brief generate
+podman compose run --rm hn-brief generate
 
 # Show configuration/help without requiring a model request
-docker compose run --rm hn-brief --help
+podman compose run --rm hn-brief --help
 
 # Preview removal of old intermediate runs
-docker compose run --rm hn-brief prune --before 2026-10-01
+podman compose run --rm hn-brief prune --before 2026-10-01
 
 # Remove only the previewed intermediate runs
-docker compose run --rm hn-brief prune --before 2026-10-01 --confirm
+podman compose run --rm hn-brief prune --before 2026-10-01 --confirm
 ```
 
 The CLI must parse `--help` before resolving or probing an LLM. This corrects the current behavior where help fails when no API key is present.
@@ -187,7 +187,7 @@ The Lunar Beacon endpoint accepted an unauthenticated test request. It should be
 
 Operational documentation will cover:
 
-- Building and running the container on Linux and macOS.
+- Building and running the container with rootless Podman on Linux and a Podman machine on macOS.
 - Creating the bind-mounted data directory and local environment file.
 - Scheduling a daily run on Linux and macOS.
 - Reading `latest.json` from another local agent.
@@ -211,7 +211,7 @@ Automated tests will verify:
 
 Integration verification will:
 
-1. Build the container.
+1. Build the OCI image with Podman.
 2. Mount a temporary host data directory.
 3. Run a small fixture-backed generation without external APIs to validate filesystem behavior.
 4. Run a minimal live compatibility probe against Lunar Beacon's `qwen3.8` model.
@@ -221,7 +221,7 @@ A full 20-story live run is expected to be slow and will be performed only when 
 
 ## Acceptance Criteria
 
-- The same image runs on Linux and macOS Docker hosts.
+- The same image runs with rootless Podman on Linux and a Podman machine on macOS.
 - One command produces a retained run bundle and a complete daily JSON dataset in a mounted host directory.
 - A downstream agent can find and read the newest successful briefing using only `latest.json`.
 - Every model call needed for the briefing can be inspected after the run without exposing credentials.
