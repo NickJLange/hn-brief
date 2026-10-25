@@ -3,15 +3,17 @@ set -euo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
+export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+export PATH="$BUN_INSTALL/bin:$PATH"
+
 # Amp's base image includes Bun. Install it only if a different image lacks it.
 if ! command -v bun >/dev/null 2>&1; then
   echo "Installing Bun"
   curl -fsSL https://bun.sh/install | bash -s -- bun-v1.3.10
-  export BUN_INSTALL="$HOME/.bun"
-  export PATH="$BUN_INSTALL/bin:$PATH"
 fi
 
-echo "Using Bun $(bun --version)"
+bun_version=$(bun --version)
+echo "Using Bun $bun_version"
 echo "Installing locked dependencies"
 start=$SECONDS
 bun install --frozen-lockfile

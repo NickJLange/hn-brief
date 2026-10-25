@@ -3,5 +3,9 @@ set -euo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
+export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+export PATH="$BUN_INSTALL/bin:$PATH"
+
 # Dependencies are retained in the orb snapshot; never reinstall on resume.
-echo "Orb ready (Bun $(bun --version))"
+bun_version=$(bun --version)
+echo "Orb ready (Bun $bun_version)"
