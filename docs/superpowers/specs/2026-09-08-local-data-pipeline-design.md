@@ -89,7 +89,7 @@ data/
 └── latest.json
 ```
 
-Run directory names include the numeric UTC offset to remain unambiguous across daylight-saving transitions. Story IDs are used as filenames only after validating that they contain digits.
+Run directory names include the numeric UTC offset to remain unambiguous across daylight-saving transitions. Story IDs are used as filenames only after validating that they match `^[0-9]+$` in full.
 
 ### Run Manifest
 

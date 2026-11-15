@@ -1,13 +1,18 @@
-import { readdir, rm } from "node:fs/promises";
+import { lstat, readdir, rm } from "node:fs/promises";
 import { parse, resolve } from "node:path";
 
 const RUN_NAME = /^(\d{4}-\d{2}-\d{2})T\d{6}(?:Z|[+-]\d{4})$/;
 
+/** True for a real calendar date in YYYY-MM-DD form; rejects impossible dates such as 2026-02-30. */
+export function isIsoDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  return new Date(Date.UTC(year, month - 1, day)).toISOString().startsWith(value);
+}
+
 function assertCutoff(before: string): void {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(before);
-  const [year, month, day] = [Number(match?.[1]), Number(match?.[2]), Number(match?.[3])];
-  const valid = match !== null && new Date(Date.UTC(year, month - 1, day)).toISOString().startsWith(before);
-  if (!valid) throw new Error(`Cutoff must be a valid YYYY-MM-DD date: ${before}`);
+  if (!isIsoDate(before)) throw new Error(`Cutoff must be a valid YYYY-MM-DD date: ${before}`);
 }
 
 function assertDataRoot(dataRoot: string): string {
@@ -20,9 +25,11 @@ function assertDataRoot(dataRoot: string): string {
 export async function planPrune(dataRoot: string, before: string): Promise<string[]> {
   assertCutoff(before);
   const root = assertDataRoot(dataRoot);
+  const runsDir = resolve(root, "runs");
   let entries;
   try {
-    entries = await readdir(resolve(root, "runs"), { withFileTypes: true });
+    if ((await lstat(runsDir)).isSymbolicLink()) throw new Error(`Refusing to prune through symlinked runs directory: ${runsDir}`);
+    entries = await readdir(runsDir, { withFileTypes: true });
   } catch (error) {
     if ((error as { code?: unknown }).code === "ENOENT") return [];
     throw error;

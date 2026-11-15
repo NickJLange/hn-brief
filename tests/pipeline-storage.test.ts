@@ -66,13 +66,13 @@ test("lock excludes overlap and can be released", async () => {
   await releaseAgain();
 });
 
-test("a lock at least 24 hours old is recovered", async () => {
+test("a lock at least 12 hours old is recovered", async () => {
   const dataRoot = await root();
   const now = new Date("2026-09-08T11:00:00Z");
   await mkdir(join(dataRoot, ".generate.lock"));
   await writeFile(
     join(dataRoot, ".generate.lock", "owner.json"),
-    JSON.stringify({ pid: 1, acquiredAt: new Date(now.getTime() - 25 * 60 * 60 * 1000).toISOString() })
+    JSON.stringify({ pid: 1, acquiredAt: new Date(now.getTime() - 13 * 60 * 60 * 1000).toISOString() })
   );
 
   const release = await acquireDataLock(dataRoot, now);
@@ -81,10 +81,10 @@ test("a lock at least 24 hours old is recovered", async () => {
   await release();
 });
 
-test("a lock younger than 24 hours stays held", async () => {
+test("a lock younger than 12 hours stays held", async () => {
   const dataRoot = await root();
   const now = new Date("2026-09-08T11:00:00Z");
-  const owner = { pid: 1, token: "live", acquiredAt: new Date(now.getTime() - 23 * 60 * 60 * 1000).toISOString() };
+  const owner = { pid: 1, token: "live", acquiredAt: new Date(now.getTime() - 11 * 60 * 60 * 1000).toISOString() };
   await mkdir(join(dataRoot, ".generate.lock"));
   await writeFile(join(dataRoot, ".generate.lock", "owner.json"), JSON.stringify(owner));
 
@@ -110,7 +110,7 @@ test("an orphaned lock with an unreadable owner.json is recovered by directory a
   const lockDir = join(dataRoot, ".generate.lock");
   await mkdir(lockDir);
   await writeFile(join(lockDir, "owner.json"), "{\"pid\":");
-  const old = new Date(now.getTime() - 25 * 60 * 60 * 1000);
+  const old = new Date(now.getTime() - 13 * 60 * 60 * 1000);
   await utimes(lockDir, old, old);
 
   const release = await acquireDataLock(dataRoot, now);
@@ -180,6 +180,34 @@ test("run store writes inside the run directory and rejects escaping paths", asy
   await expect(store.writeJson("../outside.json", {})).rejects.toThrow();
   await expect(stat(join(dataRoot, "runs", "outside.json"))).rejects.toThrow();
   await expect(store.writeJson(join(dataRoot, "absolute.json"), {})).rejects.toThrow();
+});
+
+test("publication leaves every file unchanged when archive.json is corrupt", async () => {
+  const dataRoot = await root();
+  await writeFile(join(dataRoot, "archive.json"), "{not json");
+  const store = await createRunStore(dataRoot, "2026-09-08T070000-0400");
+  const before = await listFiles(dataRoot);
+  await expect(publishDaily(store, briefing(store.runId, "2026-09-08"), { articles: "a", digest: "d" })).rejects.toThrow();
+  expect(await readFile(join(dataRoot, "archive.json"), "utf8")).toBe("{not json");
+  expect(await listFiles(dataRoot)).toEqual(before);
+});
+
+test("publication rejects impossible calendar dates before writing anything", async () => {
+  const dataRoot = await root();
+  const store = await createRunStore(dataRoot, "2026-09-08T070000-0400");
+  const before = await listFiles(dataRoot);
+  for (const date of ["2026-02-30", "2026-13-45"]) {
+    await expect(publishDaily(store, briefing(store.runId, date), { articles: "a", digest: "d" })).rejects.toThrow("Invalid briefing date");
+  }
+  expect(await listFiles(dataRoot)).toEqual(before);
+});
+
+test("a run store refuses to reuse an existing run directory", async () => {
+  const dataRoot = await root();
+  const first = await createRunStore(dataRoot, "2026-09-08T070000-0400");
+  await first.writeJson("hn/top-stories.json", { hits: ["first"] });
+  await expect(createRunStore(dataRoot, "2026-09-08T070000-0400")).rejects.toThrow();
+  expect(JSON.parse(await readFile(join(first.runDir, "hn/top-stories.json"), "utf8"))).toEqual({ hits: ["first"] });
 });
 
 test("publication rejects a record from a different run", async () => {

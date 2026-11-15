@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
+import { isIsoDate } from "./prune";
 import type { ArchiveEntry, DailyBriefing, PipelineManifest } from "./types";
 
 const LOCK_DIR = ".generate.lock";
-const STALE_LOCK_MS = 24 * 60 * 60 * 1000;
+// A full run takes about 90 minutes, so a lock older than this belongs to a crashed run.
+const STALE_LOCK_MS = 12 * 60 * 60 * 1000;
 
 export interface RunStore {
   dataRoot: string;
@@ -125,7 +127,7 @@ async function moveLockAside(lockDir: string, expected: LockInfo, label: string)
   return undefined;
 }
 
-/** Acquires `dataRoot/.generate.lock` (created atomically with owner.json); recovers a lock at least 24 hours old once. */
+/** Acquires `dataRoot/.generate.lock` (created atomically with owner.json); recovers a lock at least 12 hours old once. */
 export async function acquireDataLock(dataRoot: string, now: Date = new Date()): Promise<() => Promise<void>> {
   const lockDir = join(dataRoot, LOCK_DIR);
   const running = () => new Error(`Generation already running (lock: ${lockDir})`);
@@ -179,8 +181,11 @@ function resolveInside(parent: string, relativePath: string): string {
 }
 
 export async function createRunStore(dataRoot: string, runId: string): Promise<RunStore> {
-  const runDir = resolveInside(join(dataRoot, "runs"), runId);
-  await mkdir(runDir, { recursive: true });
+  const runsDir = join(dataRoot, "runs");
+  const runDir = resolveInside(runsDir, runId);
+  await mkdir(runsDir, { recursive: true });
+  // Non-recursive: fails if the run directory already exists, so a second run never overwrites the first.
+  await mkdir(runDir);
   return {
     dataRoot,
     runId,
@@ -210,9 +215,8 @@ export async function publishDaily(
   if (record.runId !== store.runId) {
     throw new Error(`Briefing runId ${record.runId} does not match run store ${store.runId}`);
   }
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(record.date);
-  if (!match) throw new Error(`Invalid briefing date: ${record.date}`);
-  const [, year, month, day] = match;
+  if (!isIsoDate(record.date)) throw new Error(`Invalid briefing date: ${record.date}`);
+  const [year, month, day] = record.date.split("-");
   const base = `daily/${year}/${month}/${day}`;
   const paths: PublishedPaths = {
     json: `${base}.json`,
@@ -221,12 +225,7 @@ export async function publishDaily(
   };
   const root = store.dataRoot;
 
-  await atomicWriteTexts([
-    { path: join(root, paths.json), text: `${JSON.stringify(record, null, 2)}\n` },
-    { path: join(root, paths.articles), text: markdown.articles },
-    { path: join(root, paths.digest), text: markdown.digest }
-  ]);
-
+  // Read and validate the archive before writing anything, so a corrupt archive leaves every file unchanged.
   const archivePath = join(root, "archive.json");
   const entry: ArchiveEntry = {
     date: record.date,
@@ -236,6 +235,12 @@ export async function publishDaily(
   };
   const archive = [entry, ...(await readArchive(archivePath)).filter(existing => existing.date !== record.date)]
     .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+
+  await atomicWriteTexts([
+    { path: join(root, paths.json), text: `${JSON.stringify(record, null, 2)}\n` },
+    { path: join(root, paths.articles), text: markdown.articles },
+    { path: join(root, paths.digest), text: markdown.digest }
+  ]);
   await atomicWriteJson(archivePath, archive);
 
   await atomicWriteJson(join(root, "latest.json"), { date: record.date, runId: record.runId, path: paths.json });

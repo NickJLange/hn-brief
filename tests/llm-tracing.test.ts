@@ -90,6 +90,34 @@ test("a failing trace sink rejects the batch instead of producing an API error s
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
+test("a body read failure on a traced response is recorded as an error event", async () => {
+  const events: LLMTraceEvent[] = [];
+  const fetcher = mock(async () => ({
+    ok: true,
+    status: 200,
+    text: async () => { throw new Error("socket reset"); }
+  }) as unknown as Response);
+
+  await summarizeStory(hit, [], config, fetcher, undefined, async event => { events.push(event); });
+
+  expect(events.map(event => event.type)).toEqual(["request", "error"]);
+  expect(events[1]).toMatchObject({ type: "error", scope: { operation: "story" }, message: "socket reset", status: 200 });
+});
+
+test("a body read failure on a traced error response is recorded before the API error", async () => {
+  const events: LLMTraceEvent[] = [];
+  const fetcher = mock(async () => ({
+    ok: false,
+    status: 502,
+    text: async () => { throw new Error("connection dropped"); }
+  }) as unknown as Response);
+
+  await summarizeStory(hit, [], config, fetcher, undefined, async event => { events.push(event); });
+
+  expect(events.map(event => event.type)).toEqual(["request", "error"]);
+  expect(events[1]).toMatchObject({ type: "error", message: "connection dropped", status: 502 });
+});
+
 test("untraced summarizeStory makes exactly one fetch", async () => {
   const fetcher = okFetcher();
 

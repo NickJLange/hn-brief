@@ -480,11 +480,21 @@ async function fetchCompletionWithMeta(
         throw fetchError;
     });
 
+    // Traced path only: a body read failure is recorded as an error event before it is rethrown.
+    const readTracedText = async (): Promise<string> => {
+        try {
+            return await response.text();
+        } catch (readError) {
+            await emitError(getErrorMessage(readError), response.status);
+            throw readError;
+        }
+    };
+
     if (!response.ok) {
         if (!trace) {
             throw await buildApiError(response);
         }
-        const errorText = await response.text();
+        const errorText = await readTracedText();
         const apiError = await buildApiError(response, errorText);
         await emitError(apiError.message, response.status, parseJsonOrText(errorText));
         throw apiError;
@@ -492,7 +502,7 @@ async function fetchCompletionWithMeta(
 
     let data: any;
     if (trace && scope) {
-        const responseText = await response.text();
+        const responseText = await readTracedText();
         try {
             data = JSON.parse(responseText);
         } catch (parseError) {

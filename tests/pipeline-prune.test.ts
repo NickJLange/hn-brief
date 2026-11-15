@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { planPrune, pruneRuns } from "../scripts/pipeline/prune";
@@ -66,6 +66,19 @@ test("confirm deletes only the candidate runs and leaves final data and nonconfo
   expect(await exists(join(dataRoot, "daily/2026/09/08.json"))).toBe(true);
   expect(await exists(join(dataRoot, "archive.json"))).toBe(true);
   expect(await exists(join(dataRoot, "latest.json"))).toBe(true);
+});
+
+test("a symlinked runs directory is rejected before anything is listed or deleted", async () => {
+  const dataRoot = await makeDataRoot();
+  const target = await mkdtemp(join(tmpdir(), "hn-brief-prune-target-"));
+  roots.push(target);
+  await mkdir(join(target, "2026-09-07T070000-0400"));
+  await rm(join(dataRoot, "runs"), { recursive: true });
+  await symlink(target, join(dataRoot, "runs"));
+
+  await expect(planPrune(dataRoot, "2026-09-09")).rejects.toThrow("symlinked runs directory");
+  await expect(pruneRuns(dataRoot, "2026-09-09", true)).rejects.toThrow("symlinked runs directory");
+  expect(await exists(join(target, "2026-09-07T070000-0400"))).toBe(true);
 });
 
 test("a missing runs directory yields no candidates", async () => {
