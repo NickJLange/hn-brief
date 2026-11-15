@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { createLLMConfig } from "../../shared/summarizer-core";
 import { runGeneration } from "./generate";
 import { pruneRuns } from "./prune";
+import { acquireDataLock } from "./storage";
 
 const USAGE = `Usage: bun run pipeline -- <command> [options]
 
@@ -72,19 +73,27 @@ async function main(args: string[]): Promise<void> {
       return;
     }
     case "prune": {
-      const { candidates, deleted } = await pruneRuns(dataRoot, command.before, command.confirm);
-      for (const candidate of candidates) console.log(candidate);
-      if (!command.confirm) {
-        console.log(`Dry run: ${candidates.length} run(s) older than ${command.before} would be deleted. Re-run with --confirm to delete.`);
-      } else {
-        console.log(`Deleted ${deleted.length} run(s) older than ${command.before}.`);
+      // Deleting must not race a live generation, so only --confirm takes the data lock.
+      const release = command.confirm ? await acquireDataLock(dataRoot) : undefined;
+      try {
+        const { candidates, deleted } = await pruneRuns(dataRoot, command.before, command.confirm);
+        for (const candidate of candidates) console.log(candidate);
+        if (!command.confirm) {
+          console.log(`Dry run: ${candidates.length} run(s) older than ${command.before} would be deleted. Re-run with --confirm to delete.`);
+        } else {
+          console.log(`Deleted ${deleted.length} run(s) older than ${command.before}.`);
+        }
+      } finally {
+        await release?.();
       }
       return;
     }
   }
 }
 
-main(process.argv.slice(2)).catch(error => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (import.meta.main) {
+  main(process.argv.slice(2)).catch(error => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AlgoliaHit, ProcessedStory, StoryDetails } from "../shared/summarizer-core";
+import { processStoriesWithRateLimit, type AlgoliaHit, type ProcessedStory, type StoryDetails } from "../shared/summarizer-core";
 import { runGeneration } from "../scripts/pipeline/generate";
 import type { GenerateConfig } from "../scripts/pipeline/types";
 
@@ -117,6 +117,50 @@ test("a digest failure keeps run evidence but publishes nothing and releases the
   expect(await exists(join(config.dataRoot, ".generate.lock"))).toBe(false);
 });
 
+test("an empty or whitespace-only digest is rejected before publication", async () => {
+  const config = await makeConfig();
+  await expect(runGeneration(config, {
+    now: () => startedAt,
+    fetchTopStories: async () => [hitA],
+    fetchStoryDetails: async () => detailsA,
+    processStories: async entries => entries.map(({ hit }) => processed(hit)),
+    generateDigest: async () => "  \n\t "
+  })).rejects.toThrow("empty");
+  expect(await exists(join(config.dataRoot, "latest.json"))).toBe(false);
+  expect((await Bun.file(join(config.dataRoot, "runs", "2026-09-08T223000-0400", "manifest.json")).json()).status).toBe("failed");
+});
+
+test("a fetch that returns no stories fails instead of publishing an empty briefing", async () => {
+  const config = await makeConfig();
+  await expect(runGeneration(config, {
+    now: () => startedAt,
+    fetchTopStories: async () => [],
+    processStories: async () => [],
+    generateDigest: async () => "Digest of nothing in particular"
+  })).rejects.toThrow("No stories returned");
+  expect(await exists(join(config.dataRoot, "latest.json"))).toBe(false);
+  expect(await exists(join(config.dataRoot, "daily"))).toBe(false);
+  expect((await Bun.file(join(config.dataRoot, "runs", "2026-09-08T223000-0400", "manifest.json")).json()).status).toBe("failed");
+});
+
+test("a failed manifest write does not replace the original error", async () => {
+  const config = await makeConfig();
+  const runDir = join(config.dataRoot, "runs", "2026-09-08T223000-0400");
+  try {
+    await expect(runGeneration(config, {
+      now: () => startedAt,
+      fetchTopStories: async () => {
+        // Making the run directory read-only makes every manifest write fail with EACCES.
+        await chmod(runDir, 0o500);
+        throw new Error("fetch exploded");
+      }
+    })).rejects.toThrow("fetch exploded");
+  } finally {
+    await chmod(runDir, 0o700);
+  }
+  expect(await exists(join(config.dataRoot, ".generate.lock"))).toBe(false);
+});
+
 test("a digest failure text is rejected before publication", async () => {
   const config = await makeConfig();
   await expect(runGeneration(config, {
@@ -136,34 +180,44 @@ test("waits for in-flight story work before writing the failed manifest and rele
   const manifestPath = join(config.dataRoot, "runs", "2026-09-08T223000-0400", "manifest.json");
   let manifestStatusWhenSlowFinished = "";
 
+  // Nvidia-style config, so the real code summarizes each batch's stories in parallel.
+  const nvidia = { apiKey: "secret-key", apiUrl: "https://integrate.api.nvidia.com/v1/chat/completions", model: "moonshotai/kimi-k2.5", provider: "nvidia" as const };
+  const fetcher = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const prompt = JSON.parse(String(init?.body)).messages[1].content as string;
+    if (prompt.includes(hitA.title)) {
+      await new Promise(resolve => setTimeout(resolve, 60));
+      slowFinished = true;
+      lockHeldWhenSlowFinished = await exists(join(config.dataRoot, ".generate.lock"));
+      manifestStatusWhenSlowFinished = (await Bun.file(manifestPath).json()).status;
+    }
+    return new Response(JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { content: "<Content Summary>Specific result.</Content Summary><Discussion Summary>Distinct discussion.</Discussion Summary>" } }]
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+
   await expect(runGeneration(config, {
     now: () => startedAt,
     fetchTopStories: async () => [hitA, hitB],
     fetchStoryDetails: async id => (id === "101" ? detailsA : detailsB),
-    processStories: async entries => {
-      const [fast, slow] = entries;
-      const results = await Promise.allSettled([
-        Promise.reject(new Error(`trace write failed for ${fast!.hit.objectID}`)),
-        (async () => {
-          await new Promise(resolve => setTimeout(resolve, 60));
-          slowFinished = true;
-          lockHeldWhenSlowFinished = await exists(join(config.dataRoot, ".generate.lock"));
-          manifestStatusWhenSlowFinished = (await Bun.file(manifestPath).json()).status;
-          return processed(slow!.hit);
-        })()
-      ]);
-      const failed = results.find(r => r.status === "rejected") as PromiseRejectedResult;
-      throw failed.reason;
-    },
+    processStories: (entries, _llm, trace) => processStoriesWithRateLimit(entries, nvidia, {
+      fetcher,
+      storyDelayMs: 0,
+      batchDelayMs: 0,
+      // The trace fails for story 202 while story 101 is still in flight.
+      trace: event => {
+        if (event.type === "request" && event.scope.storyId === hitB.objectID) throw new Error(`trace write failed for ${hitB.objectID}`);
+        return trace(event);
+      }
+    }),
     generateDigest: async () => "unused"
-  })).rejects.toThrow("trace write failed for 101");
+  })).rejects.toThrow("trace write failed for 202");
 
   expect(slowFinished).toBe(true);
   expect(lockHeldWhenSlowFinished).toBe(true);
   expect(manifestStatusWhenSlowFinished).toBe("running");
   const manifest = await Bun.file(manifestPath).json();
   expect(manifest.status).toBe("failed");
-  expect(manifest.error.message).toBe("trace write failed for 101");
+  expect(manifest.error.message).toBe("LLM trace sink failed: trace write failed for 202");
   expect(await exists(join(config.dataRoot, ".generate.lock"))).toBe(false);
 });
 

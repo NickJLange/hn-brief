@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import * as fsp from "node:fs/promises";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -92,6 +93,28 @@ test("a lock younger than 12 hours stays held", async () => {
   expect(JSON.parse(await readFile(join(dataRoot, ".generate.lock", "owner.json"), "utf8"))).toEqual(owner);
 });
 
+test("a lock released right after a failed take is retried instead of reported as running", async () => {
+  const dataRoot = await root();
+  // Simulate a lock that exists only for the instant of our rename: the first rename into place fails with EEXIST,
+  // and by the time we inspect the lock it is gone.
+  const realRename = fsp.rename;
+  let injected = false;
+  const spy = spyOn(fsp, "rename").mockImplementation(async (from, to) => {
+    if (!injected && String(to).endsWith(".generate.lock")) {
+      injected = true;
+      throw Object.assign(new Error("EEXIST: file already exists"), { code: "EEXIST" });
+    }
+    return realRename(from, to);
+  });
+  try {
+    const release = await acquireDataLock(dataRoot, new Date("2026-09-08T11:00:00Z"));
+    expect(injected).toBe(true);
+    await release();
+  } finally {
+    spy.mockRestore();
+  }
+});
+
 test("release leaves a lock taken over by another owner, and repeated release is a no-op", async () => {
   const dataRoot = await root();
   const release = await acquireDataLock(dataRoot, new Date("2026-09-08T11:00:00Z"));
@@ -153,6 +176,23 @@ test("publication writes final files and preserves older archive entries", async
     { date: "2026-09-07", path: "daily/2026/09/07.json", runId: "old", storyCount: 19 }
   ]);
   expect((await listFiles(dataRoot)).filter(file => file.endsWith(".tmp"))).toEqual([]);
+});
+
+test("a backfill of an older date leaves latest.json pointing at the newest day", async () => {
+  const dataRoot = await root();
+  const newer = await createRunStore(dataRoot, "2026-09-08T070000-0400");
+  await publishDaily(newer, briefing(newer.runId, "2026-09-08", 2), { articles: "a", digest: "d" });
+  const older = await createRunStore(dataRoot, "2026-09-07T070000-0400");
+  await publishDaily(older, briefing(older.runId, "2026-09-07", 1), { articles: "a", digest: "d" });
+
+  expect(JSON.parse(await readFile(join(dataRoot, "latest.json"), "utf8"))).toEqual({
+    date: "2026-09-08",
+    runId: newer.runId,
+    path: "daily/2026/09/08.json"
+  });
+  expect(await readFile(join(dataRoot, "daily/2026/09/07.md"), "utf8")).toBe("a");
+  const archive = JSON.parse(await readFile(join(dataRoot, "archive.json"), "utf8"));
+  expect(archive.map((entry: { date: string }) => entry.date)).toEqual(["2026-09-08", "2026-09-07"]);
 });
 
 test("republishing the same date replaces its archive entry instead of duplicating it", async () => {

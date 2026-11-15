@@ -105,4 +105,6 @@ test("malformed cutoffs are rejected before any filesystem traversal", async () 
 test("unsafe data roots are rejected", async () => {
   await expect(planPrune("", "2026-09-09")).rejects.toThrow(/data root/);
   await expect(planPrune("/", "2026-09-09")).rejects.toThrow(/data root/);
+  await expect(pruneRuns("", "2026-09-09", true)).rejects.toThrow(/data root/);
+  await expect(pruneRuns("/", "2026-09-09", true)).rejects.toThrow(/data root/);
 });

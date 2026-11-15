@@ -149,7 +149,9 @@ export async function acquireDataLock(dataRoot: string, now: Date = new Date()):
       await rm(candidate, { recursive: true, force: true });
       if (!isErrorCode(error, "EEXIST") && !isErrorCode(error, "ENOTEMPTY")) throw error;
       const existing = await readLockInfo(lockDir);
-      if (attempt > 0 || !existing) throw running();
+      // Released between our rename and this read: try once more.
+      if (!existing) continue;
+      if (attempt > 0) throw running();
       const lockTime = existing.acquiredAt ?? existing.mtimeMs;
       if (now.getTime() - lockTime < STALE_LOCK_MS) throw running();
       const stale = await moveLockAside(lockDir, existing, "stale");
@@ -243,6 +245,9 @@ export async function publishDaily(
   ]);
   await atomicWriteJson(archivePath, archive);
 
-  await atomicWriteJson(join(root, "latest.json"), { date: record.date, runId: record.runId, path: paths.json });
+  // A backfill of an older date updates its files and archive entry but leaves latest.json pointing at the newest day.
+  if (archive[0]?.date === record.date) {
+    await atomicWriteJson(join(root, "latest.json"), { date: record.date, runId: record.runId, path: paths.json });
+  }
   return paths;
 }

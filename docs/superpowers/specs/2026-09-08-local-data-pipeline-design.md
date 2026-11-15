@@ -137,23 +137,27 @@ Retained prompts make future model comparisons reproducible without refetching H
 
 ## Container Interface
 
-The repository will include a Containerfile and Podman Compose configuration for a service that mounts a host directory at `/data`. The default command performs one live daily run. Configuration is supplied through an ignored local environment file.
+The repository will include a Containerfile and Podman Compose configuration for a service that mounts a host directory at `/data`. The default command performs one live daily run. LLM settings are supplied through an ignored local environment file (`.env.pipeline`). The data directory is not set there: export `HN_BRIEF_DATA_DIR` in the shell, and always pass `--project-directory` rather than `--env-file`.
 
 Representative commands:
 
 ```bash
+export HN_BRIEF_DATA_DIR="$HOME/hn-brief-data"
+
 # Run one briefing now
-podman compose run --rm hn-brief generate
+podman compose --project-directory "$PWD" run --rm hn-brief generate
 
 # Show configuration/help without requiring a model request
-podman compose run --rm hn-brief --help
+podman compose --project-directory "$PWD" run --rm hn-brief --help
 
 # Preview removal of old intermediate runs
-podman compose run --rm hn-brief prune --before 2026-10-01
+podman compose --project-directory "$PWD" run --rm hn-brief prune --before 2026-10-01
 
 # Remove only the previewed intermediate runs
-podman compose run --rm hn-brief prune --before 2026-10-01 --confirm
+podman compose --project-directory "$PWD" run --rm hn-brief prune --before 2026-10-01 --confirm
 ```
+
+Time zone: run IDs and the briefing date in `daily/YYYY/MM/DD.json` use `TZ`, which defaults to `America/New_York`. The `prune --before` cutoff is compared against the date in the run ID, so it uses the same time zone.
 
 The CLI must parse `--help` before resolving or probing an LLM. This corrects the current behavior where help fails when no API key is present.
 
@@ -174,6 +178,7 @@ There is no automatic retention period in the first version.
 ## Failure and Concurrency Semantics
 
 - A lock in the data directory prevents overlapping scheduled runs.
+- A crashed run's lock is reclaimed once it is 12 hours old. Younger locks keep later runs out.
 - Failure to acquire the lock exits nonzero without modifying either run.
 - Each intermediate artifact is written as soon as its stage finishes.
 - Stable daily files and indexes use write-to-temporary-file followed by same-filesystem rename.

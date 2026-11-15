@@ -39,7 +39,10 @@ const okFetcher = () => mock(async () => new Response(JSON.stringify(raw), {
 
 test("story tracing records request, raw response, parsed output, and timing without credentials", async () => {
   const events: LLMTraceEvent[] = [];
-  const fetcher = okFetcher();
+  const fetcher = mock(async () => {
+    await Bun.sleep(20);
+    return new Response(JSON.stringify(raw), { status: 200, headers: { "content-type": "application/json" } });
+  });
 
   const result = await summarizeStory(hit, [], config, fetcher, undefined, async event => { events.push(event); });
 
@@ -49,7 +52,7 @@ test("story tracing records request, raw response, parsed output, and timing wit
   expect(events[1]).toMatchObject({ type: "response", body: raw });
   expect(JSON.stringify(events)).not.toContain("must-not-appear");
   expect(JSON.stringify(events)).not.toContain("llm.test");
-  expect((events[1] as Extract<LLMTraceEvent, { type: "response" }>).elapsedMs).toBeGreaterThanOrEqual(0);
+  expect((events[1] as Extract<LLMTraceEvent, { type: "response" }>).elapsedMs).toBeGreaterThanOrEqual(15);
 });
 
 test("digest tracing uses digest scope and retains provider errors", async () => {

@@ -152,6 +152,7 @@ export async function runGeneration(
 
     const entries = await runStage(manifest, store, "fetch", deps.now, async () => {
       const hits = await deps.fetchTopStories();
+      if (hits.length === 0) throw new Error("No stories returned");
       await runStore.writeJson("hn/top-stories.json", hits);
       return settleAll(hits, async hit => {
         if (!/^\d+$/.test(hit.objectID)) throw new Error(`Invalid HN story ID: ${hit.objectID}`);
@@ -172,6 +173,7 @@ export async function runGeneration(
     const digest = await runStage(manifest, store, "digest", deps.now, () =>
       deps.generateDigest(stories, config.llm, trace.sink)
     );
+    if (!digest.trim()) throw new Error("Digest generation returned empty text");
     if (isDigestFailureText(digest)) throw new Error(digest);
 
     const daily = createDailyBriefing(config, runId, startedAt, deps.now(), stories, digest);
@@ -201,7 +203,7 @@ export async function runGeneration(
         inference: recorder?.snapshot() ?? emptyInferenceStats(),
         error: { name: normalized.name, message: normalized.message },
         finalPaths: undefined
-      });
+      }).catch(() => undefined);
     }
     throw error;
   } finally {
