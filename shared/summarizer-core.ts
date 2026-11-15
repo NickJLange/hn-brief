@@ -1863,10 +1863,13 @@ export async function processStoriesWithRateLimit(
         
         if (isNvidia) {
             // Nvidia NIM is typically latency-bound. Run each batch in parallel to fit within cron time limits.
-            const results = await Promise.all(
+            // Settle every story before surfacing a failure so no story work is still running when the caller cleans up.
+            const settled = await Promise.allSettled(
                 batch.map(({ hit, details }) => summarizeStory(hit, details.children || [], articleConfig, fetcher, logger, trace))
             );
-            processedStories.push(...results);
+            const failed = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+            if (failed) throw failed.reason;
+            processedStories.push(...settled.map(r => (r as PromiseFulfilledResult<ProcessedStory>).value));
         } else {
             // Process sequentially with delay between each
             for (const { hit, details } of batch) {
