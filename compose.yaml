@@ -1,0 +1,14 @@
+services:
+  hn-brief:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: localhost/hn-brief-pipeline:local
+    env_file:
+      - path: .env.pipeline
+        required: false
+    environment:
+      DATA_DIR: /data
+      TZ: America/New_York
+    volumes:
+      - ${HN_BRIEF_DATA_DIR:-./data}:/data:Z
