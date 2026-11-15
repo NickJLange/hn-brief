@@ -1728,7 +1728,7 @@ export async function summarizeStory(
                 type: 'parsed',
                 scope,
                 body: { summary: parsed.summary, discussion: parsed.discussion, finishReason },
-                qualityFailure: isStorySummaryLowQuality({
+                qualityFailure: needsStoryRepair({
                     summary: parsed.summary,
                     discussion_summary: parsed.discussion
                 }),

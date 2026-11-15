@@ -201,6 +201,12 @@ async function readArchive(path: string): Promise<ArchiveEntry[]> {
   try {
     const value: unknown = JSON.parse(await readFile(path, "utf8"));
     if (!Array.isArray(value)) throw new Error(`Invalid archive (expected array): ${path}`);
+    for (const entry of value) {
+      const e = entry as Partial<ArchiveEntry> | null;
+      if (!e || typeof e.date !== "string" || !isIsoDate(e.date) || typeof e.path !== "string" || typeof e.runId !== "string") {
+        throw new Error(`Invalid archive entry in ${path}: ${JSON.stringify(entry)}`);
+      }
+    }
     return value as ArchiveEntry[];
   } catch (error) {
     if (isErrorCode(error, "ENOENT")) return [];

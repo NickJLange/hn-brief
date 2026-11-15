@@ -17,6 +17,7 @@ Run these from the repository root.
 ```bash
 cp .env.pipeline.example .env.pipeline
 mkdir -p "$HOME/hn-brief-data"
+chmod 700 "$HOME/hn-brief-data"  # traces contain full prompts and responses
 
 podman compose --project-directory "$PWD" build
 ```
@@ -75,7 +76,7 @@ Then inspect the evidence:
 - `hn/stories/<id>.json`: the details fetched for each story.
 - `llm/stories/<id>/` and `llm/digest/`: one directory per story (and one for the digest) holding `request.json`, `response.json`, `error.json`, and `parsed.json`. Retries for that story share the directory and are numbered, for example `attempt-02-request.json`.
 
-A failed run publishes nothing: `latest.json`, `archive.json`, and the daily files are unchanged. A failed run also releases the lock, so the next run can start. A run that is killed instead (for example, the Mac sleeps or the container is stopped) leaves `.generate.lock` behind. Later runs report `Generation already running` until the lock is 12 hours old and is reclaimed automatically. If no run is active, you can delete `.generate.lock` in the data directory to recover sooner.
+A run that fails before publishing changes nothing: `latest.json`, `archive.json`, and the daily files stay as they were. Publishing itself replaces files one at a time, so a failure during that step on a same-day rerun can leave that day's files mixed; rerun the day to repair them. A failed run also releases the lock, so the next run can start. A run that is killed instead (for example, the Mac sleeps or the container is stopped) leaves `.generate.lock` behind. Later runs report `Generation already running` until the lock is 12 hours old and is reclaimed automatically. If no run is active, you can delete `.generate.lock` in the data directory to recover sooner.
 
 ## 6. Pruning
 

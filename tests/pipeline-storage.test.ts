@@ -223,13 +223,16 @@ test("run store writes inside the run directory and rejects escaping paths", asy
 });
 
 test("publication leaves every file unchanged when archive.json is corrupt", async () => {
-  const dataRoot = await root();
-  await writeFile(join(dataRoot, "archive.json"), "{not json");
-  const store = await createRunStore(dataRoot, "2026-09-08T070000-0400");
-  const before = await listFiles(dataRoot);
-  await expect(publishDaily(store, briefing(store.runId, "2026-09-08"), { articles: "a", digest: "d" })).rejects.toThrow();
-  expect(await readFile(join(dataRoot, "archive.json"), "utf8")).toBe("{not json");
-  expect(await listFiles(dataRoot)).toEqual(before);
+  // Invalid JSON, and valid JSON whose entry would sort ahead of the new date and silently skip latest.json.
+  for (const corrupt of ["{not json", '[{"date":"not-a-date","path":"x","runId":"y"}]']) {
+    const dataRoot = await root();
+    await writeFile(join(dataRoot, "archive.json"), corrupt);
+    const store = await createRunStore(dataRoot, "2026-09-08T070000-0400");
+    const before = await listFiles(dataRoot);
+    await expect(publishDaily(store, briefing(store.runId, "2026-09-08"), { articles: "a", digest: "d" })).rejects.toThrow();
+    expect(await readFile(join(dataRoot, "archive.json"), "utf8")).toBe(corrupt);
+    expect(await listFiles(dataRoot)).toEqual(before);
+  }
 });
 
 test("publication rejects impossible calendar dates before writing anything", async () => {
