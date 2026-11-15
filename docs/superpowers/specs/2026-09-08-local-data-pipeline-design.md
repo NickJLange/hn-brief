@@ -153,7 +153,7 @@ podman compose --project-directory "$PWD" run --rm hn-brief --help
 # Preview removal of old intermediate runs
 podman compose --project-directory "$PWD" run --rm hn-brief prune --before 2026-10-01
 
-# Remove only the previewed intermediate runs
+# Remove the runs older than the cutoff (re-evaluated at deletion time)
 podman compose --project-directory "$PWD" run --rm hn-brief prune --before 2026-10-01 --confirm
 ```
 

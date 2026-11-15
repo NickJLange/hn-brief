@@ -18,7 +18,7 @@ async function makeConfig(): Promise<GenerateConfig> {
     dataRoot,
     timeZone: "America/New_York",
     providerName: "OpenAI-compatible",
-    llm: { apiKey: "secret-key", apiUrl: "http://localhost:9/v1/chat/completions", model: "qwen3.8" }
+    llm: { apiKey: "secret-key", apiUrl: "http://user:pw@localhost:9/v1/chat/completions?token=t", model: "qwen3.8" }
   };
 }
 
@@ -62,7 +62,7 @@ test("publishes a retained run with ordered stories, New York date, window, and 
   expect(daily.runId).toBe("2026-09-08T223000-0400");
   expect(daily.stories.map(story => story.id)).toEqual(["101", "202"]);
   expect(daily.digest).toBe("Digest for Alpha story then Beta story");
-  expect(daily.model).toEqual({ provider: "OpenAI-compatible", endpoint: config.llm.apiUrl, name: "qwen3.8" });
+  expect(daily.model).toEqual({ provider: "OpenAI-compatible", endpoint: "http://localhost:9/v1/chat/completions", name: "qwen3.8" });
   expect(daily.source).toEqual({
     kind: "hacker-news",
     query: "last-24-hours",

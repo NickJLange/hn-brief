@@ -57,7 +57,17 @@ function sourceWindow(startedAt: Date) {
 }
 
 function modelInfo(config: GenerateConfig) {
-  return { provider: config.providerName, endpoint: config.llm.apiUrl, name: config.llm.model };
+  return { provider: config.providerName, endpoint: redactEndpoint(config.llm.apiUrl), name: config.llm.model };
+}
+
+/** Drops URL userinfo, query, and fragment so a credential-bearing LLM_API_URL is never persisted. */
+function redactEndpoint(apiUrl: string): string {
+  try {
+    const url = new URL(apiUrl);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    return "[invalid URL]";
+  }
 }
 
 function createRunningManifest(config: GenerateConfig, runId: string, startedAt: Date): PipelineManifest {
