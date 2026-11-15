@@ -23,3 +23,15 @@ The approved detailed design is `docs/superpowers/specs/2026-09-08-local-data-pi
 - Build and inspect the OCI image with Podman.
 - Run fixture-backed generation into a temporary bind mount.
 - Run a minimal live `qwen3.8` compatibility probe without performing a full 20-story generation.
+
+## Verification Results
+
+Recorded on 2026-09-08 (local time, America/New_York) on macOS arm64 with Podman 5.8.2.
+
+- `bun test`: 80 pass, 0 fail, 8 files.
+- `bunx tsc --noEmit`: does not exit 0. It reports 298 errors, nearly all for missing Bun/Node ambient types (for example `Cannot find name 'process'` and `'node:path'`). The repository has no `@types/node` or `bun-types` setup for this check, so these errors predate the pipeline. Not fixed in this change.
+- `git diff --check`: no output, exit 0.
+- `podman build -f Containerfile -t localhost/hn-brief-pipeline:local .`: succeeded. `podman compose build` failed on this machine because `docker-credential-desktop` is not installed; the direct Podman build was used.
+- In-container fixture test, `podman run --rm --entrypoint bun -v "$PWD:/src:ro,Z" -w /src localhost/hn-brief-pipeline:local test tests/pipeline-generate.test.ts`: 5 pass, 0 fail. The read-only mount did not block Bun.
+- Live compatibility probe: one eight-token request to `lunarbeacon.newyork.nicklange.family:11434` for model `qwen3.8`. HTTP 200, assistant content `OK`, no API key sent.
+- Full 20-story generation: not run. It is operator-triggered.
