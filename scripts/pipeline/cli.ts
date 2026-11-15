@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { createLLMConfig } from "../../shared/summarizer-core";
 import { runGeneration } from "./generate";
-import { pruneRuns } from "./prune";
+import { planPrune, pruneRuns } from "./prune";
 import { acquireDataLock } from "./storage";
 
 const USAGE = `Usage: bun run pipeline -- <command> [options]
@@ -74,6 +74,8 @@ async function main(args: string[]): Promise<void> {
     }
     case "prune": {
       // Deleting must not race a live generation, so only --confirm takes the data lock.
+      // Validate the cutoff and data root before touching the lock.
+      await planPrune(dataRoot, command.before);
       const release = command.confirm ? await acquireDataLock(dataRoot) : undefined;
       try {
         const { candidates, deleted } = await pruneRuns(dataRoot, command.before, command.confirm);

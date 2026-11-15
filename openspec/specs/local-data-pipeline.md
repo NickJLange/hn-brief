@@ -29,7 +29,7 @@ The approved detailed design is `docs/superpowers/specs/2026-09-08-local-data-pi
 Recorded on 2026-09-08 (local time, America/New_York) on macOS arm64 with Podman 5.8.2.
 
 - `bun test`: 80 pass, 0 fail, 8 files.
-- `bunx tsc --noEmit`: does not exit 0. It reports 298 errors, nearly all for missing Bun/Node ambient types (for example `Cannot find name 'process'` and `'node:path'`). The repository has no `@types/node` or `bun-types` setup for this check, so these errors predate the pipeline. Not fixed in this change.
+- `bunx tsc --noEmit`: does not exit 0. It reports 298 errors, nearly all for missing Bun/Node ambient types (for example `Cannot find name 'process'` and `'node:path'`). `@types/bun` is a devDependency but `tsconfig.json` does not load it for this check, and the base branch shows the same kinds of errors in the existing code (233 before this branch). Not fixed in this change.
 - `git diff --check`: no output, exit 0.
 - `podman build -f Containerfile -t localhost/hn-brief-pipeline:local .`: succeeded. `podman compose build` failed on this machine because `docker-credential-desktop` is not installed; the direct Podman build was used.
 - In-container fixture test, `podman run --rm --entrypoint bun -v "$PWD:/src:ro,Z" -w /src localhost/hn-brief-pipeline:local test tests/pipeline-generate.test.ts`: 5 pass, 0 fail. The read-only mount did not block Bun.
