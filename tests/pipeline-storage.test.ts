@@ -229,7 +229,7 @@ test("publication leaves every file unchanged when archive.json is corrupt", asy
     await writeFile(join(dataRoot, "archive.json"), corrupt);
     const store = await createRunStore(dataRoot, "2026-09-08T070000-0400");
     const before = await listFiles(dataRoot);
-    await expect(publishDaily(store, briefing(store.runId, "2026-09-08"), { articles: "a", digest: "d" })).rejects.toThrow();
+    await expect(publishDaily(store, briefing(store.runId, "2026-09-08"), { articles: "a", digest: "d" })).rejects.toThrow(/JSON|Invalid archive/);
     expect(await readFile(join(dataRoot, "archive.json"), "utf8")).toBe(corrupt);
     expect(await listFiles(dataRoot)).toEqual(before);
   }
