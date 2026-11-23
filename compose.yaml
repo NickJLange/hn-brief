@@ -9,6 +9,5 @@ services:
         required: false
     environment:
       DATA_DIR: /data
-      TZ: America/New_York
     volumes:
       - ${HN_BRIEF_DATA_DIR:-./data}:/data:Z

@@ -47,7 +47,7 @@ function briefing(runId: string, date: string, storyCount = 0): DailyBriefing {
 
 async function listFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { recursive: true });
-  return entries.map(String);
+  return entries.map(String).sort();
 }
 
 test("formatRunId uses local time and the DST-correct numeric offset", () => {

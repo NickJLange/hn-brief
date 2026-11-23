@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { planPrune, pruneRuns } from "../scripts/pipeline/prune";
+import { cutoffForAge, planPrune, pruneRuns } from "../scripts/pipeline/prune";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -107,4 +107,16 @@ test("unsafe data roots are rejected", async () => {
   await expect(planPrune("/", "2026-09-09")).rejects.toThrow(/data root/);
   await expect(pruneRuns("", "2026-09-09", true)).rejects.toThrow(/data root/);
   await expect(pruneRuns("/", "2026-09-09", true)).rejects.toThrow(/data root/);
+});
+
+test("cutoffForAge counts days back from now in the given time zone", () => {
+  // 03:00 UTC on 23 Nov is still 22 Nov in New York; 90 days earlier is 24 Aug there but 25 Aug in UTC.
+  const now = new Date("2026-11-23T03:00:00Z");
+  expect(cutoffForAge(now, 90, "America/New_York")).toBe("2026-08-24");
+  expect(cutoffForAge(now, 90, "UTC")).toBe("2026-08-25");
+  expect(cutoffForAge(now, 1, "America/New_York")).toBe("2026-11-21");
+  // Just after the spring-forward night, 1 day back is still the previous calendar day.
+  expect(cutoffForAge(new Date("2026-03-09T04:30:00Z"), 1, "America/New_York")).toBe("2026-03-08");
+  // Fall-back night in London: 23:30Z on 25 Oct is still 25 Oct locally, so 1 day back is 24 Oct.
+  expect(cutoffForAge(new Date("2026-10-25T23:30:00Z"), 1, "Europe/London")).toBe("2026-10-24");
 });

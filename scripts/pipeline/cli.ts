@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { createLLMConfig } from "../../shared/summarizer-core";
 import { runGeneration } from "./generate";
-import { planPrune, pruneRuns } from "./prune";
+import { cutoffForAge, planPrune, pruneRuns } from "./prune";
 import { acquireDataLock } from "./storage";
 
 const USAGE = `Usage: bun run pipeline -- <command> [options]
@@ -10,6 +10,7 @@ Commands:
   generate                              Run one live daily generation
   prune --before YYYY-MM-DD [--confirm] Preview intermediate runs older than the cutoff;
                                         delete them only with --confirm. Daily data is never removed.
+  prune --older-than-days N [--confirm] Same, with the cutoff N days before today (in TZ).
 
 Options:
   -h, --help                            Show this help
@@ -18,7 +19,7 @@ Environment:
   DATA_DIR  Data root (default: data)
   TZ        Time zone for run IDs and daily dates (default: America/New_York)`;
 
-const PRUNE_USAGE = `Usage: bun run pipeline -- prune --before YYYY-MM-DD [--confirm]
+const PRUNE_USAGE = `Usage: bun run pipeline -- prune (--before YYYY-MM-DD | --older-than-days N) [--confirm]
 
 Removes only runs/<run-id> directories whose run date is strictly before the cutoff.
 Without --confirm, lists the candidates and deletes nothing.`;
@@ -27,7 +28,7 @@ type Command =
   | { kind: "help" }
   | { kind: "prune-help" }
   | { kind: "generate" }
-  | { kind: "prune"; before: string; confirm: boolean };
+  | { kind: "prune"; cutoff: { before: string } | { olderThanDays: number }; confirm: boolean };
 
 /** Parses argv without reading any LLM configuration, so help works with no API keys set. */
 export function parseArgs(args: string[]): Command {
@@ -41,15 +42,26 @@ export function parseArgs(args: string[]): Command {
   }
   if (command === "prune") {
     if (rest.includes("--help") || rest.includes("-h")) return { kind: "prune-help" };
-    const beforeIndex = rest.indexOf("--before");
-    const before = beforeIndex === -1 ? undefined : rest[beforeIndex + 1];
-    if (before === undefined || before.startsWith("--")) {
-      throw new Error(`prune requires --before YYYY-MM-DD.\n\n${PRUNE_USAGE}`);
+    const optionIndexes = ["--before", "--older-than-days"].map(name => rest.indexOf(name)).filter(index => index !== -1);
+    if (optionIndexes.length !== 1) {
+      throw new Error(`prune requires exactly one of --before YYYY-MM-DD or --older-than-days N.\n\n${PRUNE_USAGE}`);
+    }
+    const optionIndex = optionIndexes[0];
+    const value = rest[optionIndex + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error(`${rest[optionIndex]} requires a value.\n\n${PRUNE_USAGE}`);
+    }
+    let cutoff: { before: string } | { olderThanDays: number };
+    if (rest[optionIndex] === "--before") {
+      cutoff = { before: value };
+    } else {
+      if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 36500) throw new Error(`--older-than-days must be a whole number of days from 1 to 36500: ${value}`);
+      cutoff = { olderThanDays: Number(value) };
     }
     const confirm = rest.includes("--confirm");
-    const unknown = rest.filter((arg, index) => arg !== "--confirm" && index !== beforeIndex && index !== beforeIndex + 1);
+    const unknown = rest.filter((arg, index) => arg !== "--confirm" && index !== optionIndex && index !== optionIndex + 1);
     if (unknown.length > 0) throw new Error(`Unknown prune option: ${unknown[0]}\n\n${PRUNE_USAGE}`);
-    return { kind: "prune", before, confirm };
+    return { kind: "prune", cutoff, confirm };
   }
   throw new Error(`Unknown command: ${command}\n\n${USAGE}`);
 }
@@ -73,17 +85,20 @@ async function main(args: string[]): Promise<void> {
       return;
     }
     case "prune": {
+      const before = "before" in command.cutoff
+        ? command.cutoff.before
+        : cutoffForAge(new Date(), command.cutoff.olderThanDays, timeZone);
       // Deleting must not race a live generation, so only --confirm takes the data lock.
       // Validate the cutoff and data root before touching the lock.
-      await planPrune(dataRoot, command.before);
+      await planPrune(dataRoot, before);
       const release = command.confirm ? await acquireDataLock(dataRoot) : undefined;
       try {
-        const { candidates, deleted } = await pruneRuns(dataRoot, command.before, command.confirm);
+        const { candidates, deleted } = await pruneRuns(dataRoot, before, command.confirm);
         for (const candidate of candidates) console.log(candidate);
         if (!command.confirm) {
-          console.log(`Dry run: ${candidates.length} run(s) older than ${command.before} would be deleted. Re-run with --confirm to delete.`);
+          console.log(`Dry run: ${candidates.length} run(s) older than ${before} would be deleted. Re-run with --confirm to delete.`);
         } else {
-          console.log(`Deleted ${deleted.length} run(s) older than ${command.before}.`);
+          console.log(`Deleted ${deleted.length} run(s) older than ${before}.`);
         }
       } finally {
         await release?.();
