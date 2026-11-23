@@ -75,6 +75,34 @@ test("prune --confirm refuses to delete while a generation holds the data lock; 
   }
 });
 
+test("prune --older-than-days removes only runs older than the age, and needs a positive whole number", async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "hn-brief-cli-age-"));
+  const day = (daysAgo: number) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", year: "numeric", month: "2-digit", day: "2-digit" })
+      .format(new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000));
+  const old = join(dataRoot, "runs", `${day(100)}T070000Z`);
+  const recent = join(dataRoot, "runs", `${day(80)}T070000Z`);
+  await Bun.write(join(old, "manifest.json"), "{}");
+  await Bun.write(join(recent, "manifest.json"), "{}");
+  try {
+    const result = await run(["scripts/pipeline/cli.ts", "prune", "--older-than-days", "90", "--confirm"], { DATA_DIR: dataRoot, TZ: "UTC" });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("Deleted 1 run(s)");
+    expect(await stat(old).then(() => true, () => false)).toBe(false);
+    expect(await stat(recent).then(() => true, () => false)).toBe(true);
+
+    for (const bad of ["0", "-5", "1.5", "ninety", "99999999999"]) {
+      const rejected = await run(["scripts/pipeline/cli.ts", "prune", "--older-than-days", bad], { DATA_DIR: dataRoot });
+      expect(rejected.code).toBe(1);
+    }
+    const both = await run(["scripts/pipeline/cli.ts", "prune", "--before", "2026-01-01", "--older-than-days", "90"], { DATA_DIR: dataRoot });
+    expect(both.code).toBe(1);
+    expect(both.stderr).toContain("exactly one");
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
 test("summarizer --help exits 0 without API keys", async () => {
   const result = await run(["scripts/summarizer.ts", "--help"]);
   expect(result.code).toBe(0);

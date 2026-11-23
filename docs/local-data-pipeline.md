@@ -2,11 +2,37 @@
 
 The local pipeline runs once a day in a Podman container, fetches the top Hacker News stories from the last 24 hours, summarizes each with a local OpenAI-compatible model, and writes durable JSON, Markdown, and inference traces to a host directory. It is separate from the upstream Cloudflare Worker, which remains supported.
 
+## Background and design
+
+The hosted service (a Cloudflare Worker committing summaries to GitHub) stopped publishing after 2026-07-16. This pipeline replaces it with a private, local setup:
+
+- **One-shot container, host scheduling:** each run fetches, summarizes, publishes, and exits. cron/systemd or `launchd` owns the schedule, so there is no long-running process to babysit.
+- **Data, not a website:** output is plain JSON and Markdown in one directory, for other agents to read and republish.
+- **Keep the evidence:** every run keeps its HN inputs and each model request, raw response, parsed result, timing, and token count under `runs/`, so model problems can be debugged and cheaper models compared on the same inputs. API keys and request headers are never written.
+- **Protect the last good briefing:** a lock prevents overlapping runs, a run that fails before publishing exits nonzero and changes nothing, and `latest.json` is written last. Publishing itself is not all-or-nothing; see section 5.
+- **Explicit cleanup:** run evidence is deleted only by `prune`, by date or age; published briefings are never pruned.
+- **Out of scope:** fetching article bodies (summaries use the HN title, post text, and comments, as before) and backfilling missed days.
+
+Data directory layout:
+
+```text
+<data>/
+├── latest.json            # newest briefing: {date, runId, path}
+├── archive.json           # every published day, newest first
+├── daily/YYYY/MM/
+│   ├── DD.json            # the briefing as structured data
+│   ├── DD.md              # story summaries as Markdown
+│   └── DD-digest.md       # the digest as Markdown
+└── runs/<run-id>/         # retained evidence: manifest.json, hn/, llm/
+```
+
+Run IDs are the local start time plus UTC offset in `TZ`, for example `2026-09-08T070000-0400`.
+
 ## 1. Prerequisites
 
 - Podman 5.x. Verify with `podman --version`.
 - On macOS, a running Podman machine: `podman machine start`.
-- Network access to Lunar Beacon, the LLM host at `http://lunarbeacon.newyork.nicklange.family:11434`.
+- Network access to Lunar Beacon, the LLM host at `http://llm-host.example:11434`.
 - A host data directory for the output. It must be an absolute path.
   - **macOS:** put it under `$HOME`, for example `$HOME/hn-brief-data`. The Podman VM shares only your home directory with the host, so paths under `/tmp` or other locations outside `$HOME` cannot be bind-mounted.
 
@@ -16,6 +42,7 @@ Run these from the repository root.
 
 ```bash
 cp .env.pipeline.example .env.pipeline
+# Edit .env.pipeline: set LLM_API_URL and LLM_MODEL to your own model server and model.
 mkdir -p "$HOME/hn-brief-data"
 chmod 700 "$HOME/hn-brief-data"  # traces contain full prompts and responses
 
@@ -93,6 +120,16 @@ Delete them only after reviewing the list. Add `--confirm`:
 ```bash
 HN_BRIEF_DATA_DIR="$HOME/hn-brief-data" podman compose --project-directory "$PWD" run --rm hn-brief prune --before 2026-08-01 --confirm
 ```
+
+### Automatic retention
+
+To delete run evidence by age, use `--older-than-days` instead of a fixed date. The cutoff is that many days before today in `TZ`, and runs dated before the cutoff are deleted; runs on the cutoff day itself are kept:
+
+```bash
+HN_BRIEF_DATA_DIR="$HOME/hn-brief-data" podman compose --project-directory "$PWD" run --rm hn-brief prune --older-than-days 90 --confirm
+```
+
+Schedule it like the daily run (for example weekly). It takes the same data lock as `generate`, so it never deletes a run that is in progress, and it never touches `daily/`, `archive.json`, or `latest.json`.
 
 ## 7. Linux scheduling (rootless systemd user service and timer)
 

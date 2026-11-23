@@ -11,6 +11,14 @@ export function isIsoDate(value: string): boolean {
   return new Date(Date.UTC(year, month - 1, day)).toISOString().startsWith(value);
 }
 
+/** The cutoff date for keeping `days` days of runs: the calendar date in `timeZone` that is `days` days before `now`. */
+export function cutoffForAge(now: Date, days: number, timeZone: string): string {
+  // Take today's calendar date in timeZone, then subtract whole days from that date, so DST shifts can't skip a day.
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  const [year, month, day] = today.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day - days)).toISOString().slice(0, 10);
+}
+
 function assertCutoff(before: string): void {
   if (!isIsoDate(before)) throw new Error(`Cutoff must be a valid YYYY-MM-DD date: ${before}`);
 }
