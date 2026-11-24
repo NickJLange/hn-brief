@@ -72,7 +72,7 @@ Downstream agents should read only the published files:
 2. Resolve `path` relative to `<data>`. For example, `daily/2026/09/08.json`.
 3. Parse that file. It contains `schemaVersion`, `date`, `generatedAt`, `runId`, `source`, `model`, `digest`, `stories`, and `quality`.
 
-Each entry in `stories` has `id`, `title`, `url`, `points`, `num_comments`, `postType`, `summary` (the article), `discussion_summary` (the HN comments), and `topComments`. `topComments` lists the comments the discussion summary was written from, best first, as `{ id, author, text, score, depth, url }`; `url` links to the comment on Hacker News, and `text` is the comment with HTML removed.
+Each entry in `stories` has `id`, `title`, `url`, `points`, `num_comments`, `postType`, `summary` (the article), `discussion_summary` (the HN comments), and `topComments`. `topComments` lists the highest-scoring comments the selection algorithm picked as input for the discussion summary, best first (in the prompt each also carries its parent context and best replies), as `{ id, author, text, score, depth, url }`; `url` links to the comment on Hacker News, and `text` is the comment with HTML removed. A story whose summary failed still lists its selected comments.
 
 Other published files, all under `<data>`:
 

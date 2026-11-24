@@ -277,7 +277,13 @@ It needs to be over 50 chars so I am typing more words here to ensure it is pick
         ] }
       ];
       const top = selectTopComments(comments);
-      expect(top.map(c => c.id)).toEqual(["hot", "lone", "re"]);
+      // Scores follow scoreComment by hand: hot = 1 descendant (0.08) + 1 reply (0.7) + 8 chars (0.016) ≈ 0.8;
+      // lone = 200 chars (0.4); re = 7 chars (0.014) ≈ 0.01.
+      expect(top).toEqual([
+        { id: "hot", author: "popular", text: "Hot take", score: 0.8, depth: 0, url: "https://news.ycombinator.com/item?id=hot" },
+        { id: "lone", author: "lonely", text: "x".repeat(200), score: 0.4, depth: 0, url: "https://news.ycombinator.com/item?id=lone" },
+        { id: "re", author: "replier", text: "A reply", score: 0.01, depth: 1, url: "https://news.ycombinator.com/item?id=re" }
+      ]);
       const prompt = buildSummaryPrompt({ objectID: "1", title: "T", url: "u", points: 1, num_comments: 3, created_at_i: 0 }, comments);
       for (const c of top) expect(prompt).toContain(`- ${c.author}: `);
       expect(prompt.indexOf("- popular:")).toBeLessThan(prompt.indexOf("- lonely:"));
