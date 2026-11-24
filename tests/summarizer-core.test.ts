@@ -10,6 +10,8 @@ import {
   findRepairableStoryIdsInMarkdown,
   scoreComment,
   selectAndFormatComments,
+  selectTopComments,
+  buildSummaryPrompt,
   createLLMConfig,
   probeLLM,
   resolveLLMConfigWithFallback,
@@ -265,6 +267,20 @@ It needs to be over 50 chars so I am typing more words here to ensure it is pick
 
     test("selectAndFormatComments handles empty input", () => {
       expect(selectAndFormatComments([], { maxChars: 1000, perRootCap: 1 })).toBe("No comments available.");
+    });
+
+    test("selectTopComments returns exactly the comments the summary prompt shows, best first", () => {
+      const comments: Comment[] = [
+        { id: "lone", author: "lonely", text: "x".repeat(200), children: [] },
+        { id: "hot", author: "popular", text: "Hot take", children: [
+          { id: "re", author: "replier", text: "A reply", children: [] }
+        ] }
+      ];
+      const top = selectTopComments(comments);
+      expect(top.map(c => c.id)).toEqual(["hot", "lone", "re"]);
+      const prompt = buildSummaryPrompt({ objectID: "1", title: "T", url: "u", points: 1, num_comments: 3, created_at_i: 0 }, comments);
+      for (const c of top) expect(prompt).toContain(`- ${c.author}: `);
+      expect(prompt.indexOf("- popular:")).toBeLessThan(prompt.indexOf("- lonely:"));
     });
 
     test("selectAndFormatComments respects budget", () => {

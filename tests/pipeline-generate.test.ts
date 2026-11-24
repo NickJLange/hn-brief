@@ -24,7 +24,25 @@ async function makeConfig(): Promise<GenerateConfig> {
 
 const hitA: AlgoliaHit = { objectID: "101", title: "Alpha story", url: "https://a.example", points: 321, num_comments: 45, created_at_i: 1 };
 const hitB: AlgoliaHit = { objectID: "202", title: "Beta story", url: "https://b.example", points: 87, num_comments: 9, created_at_i: 2 };
-const detailsA: StoryDetails = { id: "101", title: "Alpha story", points: 321, children: [{ id: "c1" }] };
+// A short comment with two replies should outrank a long comment nobody answered; an empty comment is skipped.
+const detailsA = {
+  id: "101",
+  title: "Alpha story",
+  points: 321,
+  children: [
+    { id: "c2", author: "dee", text: "A long but unanswered comment. ".repeat(13), children: [] },
+    {
+      id: "c1",
+      author: "ann",
+      text: "<p>Short &amp; popular</p>",
+      children: [
+        { id: "r1", author: "bob", text: "Agree", children: [] },
+        { id: "r2", author: "cy", text: "Disagree, because the numbers say otherwise", children: [] }
+      ]
+    },
+    { id: "c3", author: "eve", text: "", children: [] }
+  ]
+} as StoryDetails;
 const detailsB: StoryDetails = { id: "202", title: "Beta story", points: 87, children: [] };
 
 function processed(hit: AlgoliaHit): ProcessedStory {
@@ -70,6 +88,12 @@ test("publishes a retained run with ordered stories, New York date, window, and 
     windowEnd: "2026-09-09T02:30:00.000Z"
   });
   expect(daily.quality).toEqual({ storyFailures: 0, storyCount: 2, digestValid: true });
+  const [storyA, storyB] = daily.stories;
+  expect(storyA!.topComments.map(c => c.id)).toEqual(["c1", "c2", "r2", "r1"]);
+  expect(storyA!.topComments[0]).toMatchObject({ author: "ann", depth: 0, url: "https://news.ycombinator.com/item?id=c1" });
+  expect(storyA!.topComments[0]!.text).toContain("Short");
+  expect(storyA!.topComments[0]!.text).not.toContain("<p>");
+  expect(storyB!.topComments).toEqual([]);
 
   const runDir = join(config.dataRoot, "runs", daily.runId);
   expect(await Bun.file(join(runDir, "hn/top-stories.json")).json()).toEqual([hitA, hitB]);

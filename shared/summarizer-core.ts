@@ -1027,12 +1027,15 @@ function formatComment(
  * Select and format best comments using scoring algorithm
  * Returns formatted text respecting character budget
  */
-export function selectAndFormatComments(
+type SelectedCommentThread = { meta: CommentMetadata; text: string; formatted: string };
+
+/** Picks the best comment threads within the character budget, in score order. */
+function selectCommentThreads(
     comments: Comment[],
     options: CommentSelectionOptions
-): string {
+): SelectedCommentThread[] {
     if (!comments || comments.length === 0) {
-        return 'No comments available.';
+        return [];
     }
 
     const maxAnalyzedComments = options.maxAnalyzedComments ?? MAX_ANALYZED_COMMENTS_PER_STORY;
@@ -1040,7 +1043,7 @@ export function selectAndFormatComments(
     const perRootCap = Math.max(0, options.perRootCap || 0);
 
     if (perRootCap === 0) {
-        return 'No comments available.';
+        return [];
     }
 
     // Analyze tree under hard budget limits
@@ -1050,7 +1053,7 @@ export function selectAndFormatComments(
     });
 
     if (allMetadata.length === 0) {
-        return 'No comments available.';
+        return [];
     }
 
     // Keep only top comments per root in a single pass to reduce sort work.
@@ -1084,7 +1087,7 @@ export function selectAndFormatComments(
     selected.sort((a, b) => b.score - a.score);
 
     // Format selected comments with budget enforcement
-    const formattedParts: string[] = [];
+    const threads: SelectedCommentThread[] = [];
     let currentLength = 0;
 
     // Pre-build indexes for O(1) lookups
@@ -1138,13 +1141,48 @@ export function selectAndFormatComments(
             break; // Budget exhausted
         }
 
-        formattedParts.push(formatted);
+        threads.push({ meta, text: getFormattedText(meta.comment), formatted });
         currentLength += formatted.length + 1;
     }
 
-    const result = formattedParts.join('\n').trim();
+    return threads;
+}
+
+/**
+ * Select and format best comments using scoring algorithm
+ * Returns formatted text respecting character budget
+ */
+export function selectAndFormatComments(
+    comments: Comment[],
+    options: CommentSelectionOptions
+): string {
+    const result = selectCommentThreads(comments, options).map(t => t.formatted).join('\n').trim();
     return result || 'No comments available.';
 }
+
+/** A comment the selection algorithm ranked among a story's best, as fed to the summary prompt. */
+export interface TopComment {
+    id: string;
+    author: string;
+    text: string;
+    score: number;
+    depth: number;
+    url: string;
+}
+
+/** The same comments buildSummaryPrompt gives the model, best first, with author, plain text, and a link. */
+export function selectTopComments(comments: Comment[]): TopComment[] {
+    return selectCommentThreads(comments, PROMPT_COMMENT_OPTIONS).map(({ meta, text }) => ({
+        id: meta.comment.id,
+        author: meta.comment.author,
+        text,
+        score: Math.round(meta.score * 100) / 100,
+        depth: meta.depth,
+        url: `https://news.ycombinator.com/item?id=${meta.comment.id}`
+    }));
+}
+
+
 
 // ============================================================================
 // Post Type Detection
@@ -1219,6 +1257,13 @@ export async function fetchStoryDetails(storyId: string, fetcher?: FetchLike): P
 // LLM Prompt Building
 // ============================================================================
 
+const PROMPT_COMMENT_OPTIONS: CommentSelectionOptions = {
+    maxChars: MAX_COMMENT_CHARS,
+    perRootCap: MAX_COMMENTS_PER_ROOT,
+    maxAnalyzedComments: MAX_ANALYZED_COMMENTS_PER_STORY,
+    maxDepth: MAX_COMMENT_DEPTH
+};
+
 /**
  * Build the prompt for summarizing a single story
  */
@@ -1228,12 +1273,7 @@ export function buildSummaryPrompt(story: AlgoliaHit, comments: Comment[]): stri
     const isSelfPost = postType !== 'article';
 
     // Use scoring-based comment selection
-    const commentText = selectAndFormatComments(comments, {
-        maxChars: MAX_COMMENT_CHARS,
-        perRootCap: MAX_COMMENTS_PER_ROOT,
-        maxAnalyzedComments: MAX_ANALYZED_COMMENTS_PER_STORY,
-        maxDepth: MAX_COMMENT_DEPTH
-    });
+    const commentText = selectAndFormatComments(comments, PROMPT_COMMENT_OPTIONS);
 
     const contentDescription = isSelfPost
         ? `This is a ${typeLabel} post (self-post, no external article).`
