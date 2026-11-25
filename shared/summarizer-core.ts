@@ -1170,12 +1170,28 @@ export interface TopComment {
     url: string;
 }
 
-/** The same comments buildSummaryPrompt gives the model, best first, with author, plain text, and a link. */
+const TOP_COMMENTS_LIMIT = 10;
+const NAMED_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+
+/** HN comment HTML as readable text: paragraphs become blank lines, tags are dropped, entities are decoded. */
+function commentToPlainText(html: string): string {
+    return String(html || '')
+        .replace(/<p>/gi, '\n\n')
+        .replace(/<[^>]*>/g, '')
+        .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, code: string) => {
+            if (code[0] !== '#') return NAMED_ENTITIES[code.toLowerCase()] ?? entity;
+            const point = code[1] === 'x' || code[1] === 'X' ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+            return point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : entity;
+        })
+        .trim();
+}
+
+/** The best of the comments buildSummaryPrompt gives the model, at most 10, best first, with author, readable text, and a link. */
 export function selectTopComments(comments: Comment[]): TopComment[] {
-    return selectCommentThreads(comments, PROMPT_COMMENT_OPTIONS).map(({ meta, text }) => ({
+    return selectCommentThreads(comments, PROMPT_COMMENT_OPTIONS).slice(0, TOP_COMMENTS_LIMIT).map(({ meta }) => ({
         id: meta.comment.id,
         author: meta.comment.author,
-        text,
+        text: commentToPlainText(meta.comment.text),
         score: Math.round(meta.score * 100) / 100,
         depth: meta.depth,
         url: `https://news.ycombinator.com/item?id=${meta.comment.id}`

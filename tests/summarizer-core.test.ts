@@ -289,6 +289,20 @@ It needs to be over 50 chars so I am typing more words here to ensure it is pick
       expect(prompt.indexOf("- popular:")).toBeLessThan(prompt.indexOf("- lonely:"));
     });
 
+    test("selectTopComments decodes entities, keeps paragraph breaks, and keeps the best 10", () => {
+      const [only] = selectTopComments([
+        { id: "e", author: "a", text: "Can&#x27;t <i>stop</i>.<p>Q&amp;A &lt;b&gt; &#47;x &quot;y&quot;", children: [] }
+      ]);
+      expect(only!.text).toBe("Can't stop.\n\nQ&A <b> /x \"y\"");
+
+      // Longer text scores higher, so c11 is best and c0, c1 fall outside the 10.
+      const many: Comment[] = Array.from({ length: 12 }, (_, i) => ({
+        id: `c${i}`, author: `u${i}`, text: "w".repeat(100 * (i + 1)), children: []
+      }));
+      const top = selectTopComments(many);
+      expect(top.map(c => c.id)).toEqual(["c11", "c10", "c9", "c8", "c7", "c6", "c5", "c4", "c3", "c2"]);
+    });
+
     test("selectAndFormatComments respects budget", () => {
       const comments: Comment[] = Array.from({ length: 10 }, (_, i) => ({
         id: String(i),
