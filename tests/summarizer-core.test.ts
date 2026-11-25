@@ -10,6 +10,8 @@ import {
   findRepairableStoryIdsInMarkdown,
   scoreComment,
   selectAndFormatComments,
+  selectTopComments,
+  buildSummaryPrompt,
   createLLMConfig,
   probeLLM,
   resolveLLMConfigWithFallback,
@@ -265,6 +267,40 @@ It needs to be over 50 chars so I am typing more words here to ensure it is pick
 
     test("selectAndFormatComments handles empty input", () => {
       expect(selectAndFormatComments([], { maxChars: 1000, perRootCap: 1 })).toBe("No comments available.");
+    });
+
+    test("selectTopComments returns exactly the comments the summary prompt shows, best first", () => {
+      const comments: Comment[] = [
+        { id: "lone", author: "lonely", text: "x".repeat(200), children: [] },
+        { id: "hot", author: "popular", text: "Hot take", children: [
+          { id: "re", author: "replier", text: "A reply", children: [] }
+        ] }
+      ];
+      const top = selectTopComments(comments);
+      // Scores follow scoreComment by hand: hot = 1 descendant (0.08) + 1 reply (0.7) + 8 chars (0.016) ≈ 0.8;
+      // lone = 200 chars (0.4); re = 7 chars (0.014) ≈ 0.01.
+      expect(top).toEqual([
+        { id: "hot", author: "popular", text: "Hot take", score: 0.8, depth: 0, url: "https://news.ycombinator.com/item?id=hot" },
+        { id: "lone", author: "lonely", text: "x".repeat(200), score: 0.4, depth: 0, url: "https://news.ycombinator.com/item?id=lone" },
+        { id: "re", author: "replier", text: "A reply", score: 0.01, depth: 1, url: "https://news.ycombinator.com/item?id=re" }
+      ]);
+      const prompt = buildSummaryPrompt({ objectID: "1", title: "T", url: "u", points: 1, num_comments: 3, created_at_i: 0 }, comments);
+      for (const c of top) expect(prompt).toContain(`- ${c.author}: `);
+      expect(prompt.indexOf("- popular:")).toBeLessThan(prompt.indexOf("- lonely:"));
+    });
+
+    test("selectTopComments decodes entities, keeps paragraph breaks, and keeps the best 10", () => {
+      const [only] = selectTopComments([
+        { id: "e", author: "a", text: "Can&#x27;t <i>stop</i>.<p>Q&amp;A &lt;b&gt; &#47;x &quot;y&quot;", children: [] }
+      ]);
+      expect(only!.text).toBe("Can't stop.\n\nQ&A <b> /x \"y\"");
+
+      // Longer text scores higher, so c11 is best and c0, c1 fall outside the 10.
+      const many: Comment[] = Array.from({ length: 12 }, (_, i) => ({
+        id: `c${i}`, author: `u${i}`, text: "w".repeat(100 * (i + 1)), children: []
+      }));
+      const top = selectTopComments(many);
+      expect(top.map(c => c.id)).toEqual(["c11", "c10", "c9", "c8", "c7", "c6", "c5", "c4", "c3", "c2"]);
     });
 
     test("selectAndFormatComments respects budget", () => {

@@ -1,10 +1,13 @@
-import type { LLMConfig, ProcessedStory } from "../../shared/summarizer-core";
+import type { LLMConfig, ProcessedStory, TopComment } from "../../shared/summarizer-core";
 
 export interface PipelineQuality {
   storyFailures: number;
   storyCount: number;
   digestValid: boolean;
 }
+
+/** A published story: its summaries plus the comments the summary was written from. */
+export type BriefingStory = ProcessedStory & { topComments: TopComment[] };
 
 export interface DailyBriefing {
   schemaVersion: 1;
@@ -14,7 +17,7 @@ export interface DailyBriefing {
   source: { kind: "hacker-news"; query: "last-24-hours"; windowStart: string; windowEnd: string };
   model: { provider: string; endpoint: string; name: string };
   digest: string;
-  stories: ProcessedStory[];
+  stories: BriefingStory[];
   quality: PipelineQuality;
 }
 

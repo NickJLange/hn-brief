@@ -7,6 +7,7 @@ import {
   isDigestFailureText,
   needsStoryRepair,
   processStoriesWithRateLimit,
+  selectTopComments,
   type AlgoliaHit,
   type LLMConfig,
   type LLMTraceSink,
@@ -15,7 +16,7 @@ import {
 } from "../../shared/summarizer-core";
 import { acquireDataLock, createRunStore, formatRunId, publishDaily, type RunStore } from "./storage";
 import { createFilesystemTraceRecorder, type FilesystemTraceRecorder } from "./trace";
-import type { DailyBriefing, GenerateConfig, InferenceStats, PipelineManifest } from "./types";
+import type { BriefingStory, DailyBriefing, GenerateConfig, InferenceStats, PipelineManifest } from "./types";
 
 export interface GenerationDependencies {
   now(): Date;
@@ -88,7 +89,7 @@ function createDailyBriefing(
   runId: string,
   startedAt: Date,
   generatedAt: Date,
-  stories: ProcessedStory[],
+  stories: BriefingStory[],
   digest: string
 ): DailyBriefing {
   return {
@@ -186,7 +187,9 @@ export async function runGeneration(
     if (!digest.trim()) throw new Error("Digest generation returned empty text");
     if (isDigestFailureText(digest)) throw new Error(digest);
 
-    const daily = createDailyBriefing(config, runId, startedAt, deps.now(), stories, digest);
+    const commentsById = new Map(entries.map(({ hit, details }) => [hit.objectID, details.children || []]));
+    const briefingStories = stories.map(story => ({ ...story, topComments: selectTopComments(commentsById.get(story.id) ?? []) }));
+    const daily = createDailyBriefing(config, runId, startedAt, deps.now(), briefingStories, digest);
     const paths = await runStage(manifest, store, "publish", deps.now, () =>
       publishDaily(runStore, daily, {
         articles: formatArticleMarkdown(stories, daily.date),
