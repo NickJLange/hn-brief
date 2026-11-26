@@ -11,7 +11,8 @@ The hosted service (a Cloudflare Worker committing summaries to GitHub) stopped 
 - **Keep the evidence:** every run keeps its HN inputs and each model request, raw response, parsed result, timing, and token count under `runs/`, so model problems can be debugged and cheaper models compared on the same inputs. API keys and request headers are never written.
 - **Protect the last good briefing:** a lock prevents overlapping runs, a run that fails before publishing exits nonzero and changes nothing, and `latest.json` is written last. Publishing itself is not all-or-nothing; see section 5.
 - **Explicit cleanup:** run evidence is deleted only by `prune`, by date or age; published briefings are never pruned.
-- **Out of scope:** fetching article bodies (summaries use the HN title, post text, and comments, as before) and backfilling missed days.
+- **Linked pages (optional):** with `FIRECRAWL_API_KEY` set, each story's linked page is fetched through Firecrawl and summarized by the local model, long pages in overlapping parts. Without it, summaries use the HN title, post text, and comments, as before.
+- **Out of scope:** backfilling missed days.
 
 Data directory layout:
 
@@ -33,6 +34,7 @@ Run IDs are the local start time plus UTC offset in `TZ`, for example `2026-09-0
 - Podman 5.x. Verify with `podman --version`.
 - On macOS, a running Podman machine: `podman machine start`.
 - Network access to Lunar Beacon, the LLM host at `http://llm-host.example:11434`.
+- Optional: outbound HTTPS to `api.firecrawl.dev` and a `FIRECRAWL_API_KEY`, to summarize from linked pages.
 - A host data directory for the output. It must be an absolute path.
   - **macOS:** put it under `$HOME`, for example `$HOME/hn-brief-data`. The Podman VM shares only your home directory with the host, so paths under `/tmp` or other locations outside `$HOME` cannot be bind-mounted.
 
@@ -72,7 +74,7 @@ Downstream agents should read only the published files:
 2. Resolve `path` relative to `<data>`. For example, `daily/2026/09/08.json`.
 3. Parse that file. It contains `schemaVersion`, `date`, `generatedAt`, `runId`, `source`, `model`, `digest`, `stories`, and `quality`.
 
-Each entry in `stories` has `id`, `title`, `url`, `points`, `num_comments`, `postType`, `summary` (the article), `discussion_summary` (the HN comments), and `topComments`. `topComments` lists up to 10 of the highest-scoring comments the selection algorithm picked as input for the discussion summary, best first (in the prompt each also carries its parent context and best replies), as `{ id, author, text, score, depth, url }`; `url` links to the comment on Hacker News, and `text` is the comment as plain text, with numeric entities and `&amp; &lt; &gt; &quot; &apos; &nbsp;` decoded (the entities HN emits) and paragraphs separated by blank lines. A story whose summary failed still lists its selected comments.
+Each entry in `stories` has `id`, `title`, `url`, `points`, `num_comments`, `postType`, `summary` (the article), `discussion_summary` (the HN comments), `articleSource`, and `topComments`. `articleSource` says whether `summary` was written from the linked page: `fetched` (read through Firecrawl), `pdf_skipped` (PDFs are never parsed or summarized; `.pdf` and arXiv `/pdf/` links are not sent to Firecrawl at all), `fetch_failed` (blocked, unsupported, out of credits, or the long-article notes failed), `self_post` (Ask HN and other posts without a link), or `disabled` (no `FIRECRAWL_API_KEY`). In every case but `fetched`, the summary comes from the title and comments only. `topComments` lists up to 10 of the highest-scoring comments the selection algorithm picked as input for the discussion summary, best first (in the prompt each also carries its parent context and best replies), as `{ id, author, text, score, depth, url }`; `url` links to the comment on Hacker News, and `text` is the comment as plain text, with numeric entities and `&amp; &lt; &gt; &quot; &apos; &nbsp;` decoded (the entities HN emits) and paragraphs separated by blank lines. A story whose summary failed still lists its selected comments.
 
 Other published files, all under `<data>`:
 
@@ -96,13 +98,15 @@ cat "$HOME/hn-brief-data/runs/<run-id>/manifest.json"
 
 - `status`: `running`, `complete`, or `failed`.
 - `error`: the failure name and message, when failed.
-- `stages`: timing for `fetch`, `summarize`, `digest`, and `publish`. The last stage recorded shows where the run stopped.
+- `stages`: timing for `fetch`, `articles` (linked-page fetches), `summarize`, `digest`, and `publish`. The last stage recorded shows where the run stopped.
 - `inference`: request count, elapsed time, and token usage.
 
 Then inspect the evidence:
 
 - `hn/top-stories.json`: the Algolia story list the run started from.
 - `hn/stories/<id>.json`: the details fetched for each story.
+- `hn/articles.json`: each story's Firecrawl result (`source`, plus the error when a fetch failed), written before summarizing. The published `articleSource` can differ: a fetched page whose long-article notes failed is published as `fetch_failed`.
+- `hn/articles/<id>.md`: the linked page's text as Firecrawl returned it, for each fetched story.
 - `llm/stories/<id>/` and `llm/digest/`: one directory per story (and one for the digest) holding `request.json`, `response.json`, `error.json`, and `parsed.json`. Retries for that story share the directory and are numbered, for example `attempt-02-request.json`.
 
 A run that fails before publishing changes nothing: `latest.json`, `archive.json`, and the daily files stay as they were. Publishing itself is not all-or-nothing: it replaces the daily files one at a time, then `archive.json`, then `latest.json`. A failure partway through can leave that day's files partly written or mixed with an earlier run's, or leave `archive.json` ahead of `latest.json`. If the final manifest write fails after publishing finishes, the manifest may say `failed` or still say `running`, even though the files were published. In any of these cases, run `generate` again on the same calendar day (in `TZ`) to repair it. `generate` always publishes the current day and has no date override, so a damaged earlier day cannot be regenerated after midnight. A failed run also releases the lock, so the next run can start. A run that is killed instead (for example, the Mac sleeps or the container is stopped) leaves `.generate.lock` behind. Later runs report `Generation already running` until the lock is 12 hours old and is reclaimed automatically. If no run is active, you can delete `.generate.lock` in the data directory to recover sooner.

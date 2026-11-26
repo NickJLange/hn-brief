@@ -184,6 +184,7 @@ test("rejects every later event after a write failure", async () => {
       }
       written.push(relativePath);
     },
+    writeText: async () => {},
     writeManifest: async () => {}
   };
   const recorder = createFilesystemTraceRecorder(store);

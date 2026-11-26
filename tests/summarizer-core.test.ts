@@ -11,6 +11,8 @@ import {
   scoreComment,
   selectAndFormatComments,
   selectTopComments,
+  chunkArticleText,
+  ARTICLE_CHUNK_CHARS,
   buildSummaryPrompt,
   createLLMConfig,
   probeLLM,
@@ -465,6 +467,68 @@ describe("LLM Interactions & Error Handling", () => {
     model: "test-model",
     provider: "openai-compatible" // simple provider for testing
   };
+
+  test("chunkArticleText covers the whole text with overlapping chunks", () => {
+    expect(chunkArticleText("short", 10, 3)).toEqual(["short"]);
+    const text = "abcdefghijklmnopqrstuvwxyz";
+    const chunks = chunkArticleText(text, 10, 3);
+    expect(chunks).toEqual(["abcdefghij", "hijklmnopq", "opqrstuvwx", "vwxyz"]);
+    // Prefers a line break near the end of the window.
+    expect(chunkArticleText("aaaaaaaaa\nbbbbbbbbbb", 10, 2)[0]).toBe("aaaaaaaaa");
+    expect(() => chunkArticleText(text, 10, 10)).toThrow("Invalid chunking");
+    expect(() => chunkArticleText(text, 10, 9)).toThrow("Invalid chunking");
+    expect(chunkArticleText(text, 10, 8).join("").length).toBeGreaterThan(text.length);
+  });
+
+  test("summarizeStory puts a short article in the prompt and condenses a long one first", async () => {
+    const bodies: any[] = [];
+    const fetcher = mock(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init!.body));
+      bodies.push(body);
+      const isNotes = String(body.messages[1].content).startsWith("This is part");
+      return new Response(JSON.stringify({ choices: [{ message: { content: isNotes ? `notes ${bodies.length}` : VALID_XML_RESPONSE } }] }), { status: 200 });
+    });
+    const linked = { ...mockStory, url: "https://example.com/a" };
+
+    await summarizeStory(linked, [], mockConfig, fetcher, undefined, undefined, "Short article body");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].messages[1].content).toContain("Short article body");
+
+    bodies.length = 0;
+    const long = "x".repeat(ARTICLE_CHUNK_CHARS * 2);
+    const result = await summarizeStory(linked, [], mockConfig, fetcher, undefined, undefined, long);
+    expect(result.summary).toBe("Valid content summary.");
+    // 24,000 chars at 12,000 with 1,000 overlap: 3 chunks, then the story call.
+    expect(bodies).toHaveLength(4);
+    const finalPrompt = String(bodies[3].messages[1].content);
+    expect(finalPrompt).toContain("Part 1/3:\nnotes 1");
+    expect(finalPrompt).toContain("Part 3/3:\nnotes 3");
+    expect(finalPrompt).not.toContain("xxxxxxxxxx");
+  });
+
+  test("summarizeStory falls back to title and comments when article notes fail, and says so", async () => {
+    let calls = 0;
+    const fetcher = mock(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      calls++;
+      const isNotes = String(JSON.parse(String(init!.body)).messages[1].content).startsWith("This is part");
+      return isNotes
+        ? new Response("upstream down", { status: 503 })
+        : new Response(JSON.stringify({ choices: [{ message: { content: VALID_XML_RESPONSE } }] }), { status: 200 });
+    });
+    const logger = { info: mock(() => {}), error: mock(() => {}) };
+    const linked = { ...mockStory, url: "https://example.com/a" };
+    const result = await summarizeStory(linked, [], mockConfig, fetcher, logger, undefined, "y".repeat(ARTICLE_CHUNK_CHARS + 1));
+    expect(result.summary).toBe("Valid content summary.");
+    expect(result.articleUsed).toBe(false);
+    expect(calls).toBe(2);
+    const short = await summarizeStory(linked, [], mockConfig, fetcher, logger, undefined, "Short page");
+    expect(short.articleUsed).toBe(true);
+    expect((await summarizeStory(linked, [], mockConfig, fetcher, logger)).articleUsed).toBeUndefined();
+    // Notes fail and then the story call errors too: still reported as not used.
+    const allDown = mock(async () => new Response("down", { status: 503 }));
+    const failed = await summarizeStory(linked, [], mockConfig, allDown, logger, undefined, "y".repeat(ARTICLE_CHUNK_CHARS + 1));
+    expect(failed.articleUsed).toBe(false);
+  });
 
   test("summarizeStory handles API errors gracefully", async () => {
      // Mock fetch to throw error
