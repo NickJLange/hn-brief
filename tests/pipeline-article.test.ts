@@ -122,6 +122,10 @@ test("reads Reddit links through the API with one reused token, never through Fi
 test("Reddit links without credentials are not sent to Firecrawl, and API errors are reported", async () => {
   const fc = firecrawl(200, { success: true, data: { markdown: "x" } });
   expect(await createArticleFetcher("fc-key", fc.fetcher, 0)(hit("https://old.reddit.com/r/x/comments/abc/t/"))).toEqual({ source: "disabled" });
+  expect(await createArticleFetcher("fc-key", fc.fetcher, 0)(hit("https://www.reddit.com/r/programming/"))).toEqual({
+    source: "fetch_failed",
+    error: "Not a Reddit post link"
+  });
   expect(fc.calls).toHaveLength(0);
 
   const badToken = createArticleFetcher(undefined, async () => new Response("{}", { status: 401 }), 0, { clientId: "id", clientSecret: "bad" });

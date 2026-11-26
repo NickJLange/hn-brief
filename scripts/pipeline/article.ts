@@ -22,6 +22,14 @@ const REDDIT_API = "https://oauth.reddit.com";
 const REDDIT_USER_AGENT = "linux:hn-brief:1.0 (personal daily digest)";
 const REDDIT_TOP_COMMENTS = 10;
 
+function isRedditHost(url: string): boolean {
+  try {
+    return /(^|\.)reddit\.com$|^redd\.it$/i.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 /** The post ID of a reddit.com /comments/<id> or redd.it/<id> link, or undefined for any other URL. */
 export function redditPostId(url: string): string | undefined {
   try {
@@ -115,8 +123,11 @@ export function createArticleFetcher(
     if (!hit.url) return { source: "self_post" };
     if (isPdfUrl(hit.url)) return { source: "pdf_skipped" };
     // Reddit blocks Firecrawl and anonymous requests, so its links only go through the API.
-    const postId = redditPostId(hit.url);
-    if (postId) return readReddit ? readReddit(postId) : { source: "disabled" };
+    if (isRedditHost(hit.url)) {
+      const postId = redditPostId(hit.url);
+      if (!postId) return { source: "fetch_failed", error: "Not a Reddit post link" };
+      return readReddit ? readReddit(postId) : { source: "disabled" };
+    }
     if (!apiKey) return { source: "disabled" };
 
     const wait = lastCallAt + minIntervalMs - Date.now();
