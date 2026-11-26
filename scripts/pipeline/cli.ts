@@ -18,7 +18,9 @@ Options:
 Environment:
   DATA_DIR           Data root (default: data)
   TZ                 Time zone for run IDs and daily dates (default: America/New_York)
-  FIRECRAWL_API_KEY  Optional: fetch each story's linked page through Firecrawl and summarize from it`;
+  FIRECRAWL_API_KEY  Optional: fetch each story's linked page through Firecrawl and summarize from it
+  REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET
+                     Optional: read reddit.com links through the Reddit API (Firecrawl cannot)`;
 
 const PRUNE_USAGE = `Usage: bun run pipeline -- prune (--before YYYY-MM-DD | --older-than-days N) [--confirm]
 
@@ -86,7 +88,10 @@ async function main(args: string[]): Promise<void> {
         timeZone,
         llm: config,
         providerName: provider,
-        firecrawlApiKey: process.env.FIRECRAWL_API_KEY || undefined
+        firecrawlApiKey: process.env.FIRECRAWL_API_KEY || undefined,
+        reddit: process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET
+          ? { clientId: process.env.REDDIT_CLIENT_ID, clientSecret: process.env.REDDIT_CLIENT_SECRET }
+          : undefined
       });
       console.log(`Generated ${daily.date} (run ${daily.runId}, ${daily.stories.length} stories).`);
       return;
