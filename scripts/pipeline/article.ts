@@ -50,10 +50,14 @@ export function createArticleFetcher(
         body: JSON.stringify({ url: hit.url, formats: ["markdown"], onlyMainContent: true, timeout: PAGE_TIMEOUT_MS, parsers: [] }),
         signal: AbortSignal.timeout(PAGE_TIMEOUT_MS + 15_000)
       });
-      const body = (await response.json().catch(() => undefined)) as
+      const NOT_JSON = Symbol("not JSON");
+      const parsed: unknown = await response.json().catch(() => NOT_JSON);
+      if (parsed === NOT_JSON) {
+        return { source: "fetch_failed", error: `Firecrawl HTTP ${response.status}: response was not JSON` };
+      }
+      const body = parsed as
         | { success?: boolean; error?: string; data?: { markdown?: string; metadata?: { statusCode?: number; contentType?: string } } }
         | undefined;
-      if (response.ok && !body) return { source: "fetch_failed", error: `Firecrawl HTTP ${response.status}: response was not JSON` };
       if (!response.ok || !body?.success) {
         return { source: "fetch_failed", error: `Firecrawl HTTP ${response.status}${body?.error ? `: ${body.error}` : ""}` };
       }

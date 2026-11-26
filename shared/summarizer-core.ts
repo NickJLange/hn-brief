@@ -1627,7 +1627,8 @@ const ARTICLE_NOTES_MAX_TOKENS = 1500;
 
 /** Splits text into chunks of at most `size` characters, each starting `overlap` characters before the previous one ends. Prefers to cut at a line break. */
 export function chunkArticleText(text: string, size = ARTICLE_CHUNK_CHARS, overlap = ARTICLE_CHUNK_OVERLAP): string[] {
-    if (!(size > 0 && overlap >= 0 && overlap < size)) throw new Error(`Invalid chunking: size ${size}, overlap ${overlap}`);
+    // A cut may land as early as 80% into the window, so a larger overlap could move the next chunk backward.
+    if (!(size > 0 && overlap >= 0 && overlap < size * 0.8)) throw new Error(`Invalid chunking: size ${size}, overlap ${overlap}`);
     const chunks: string[] = [];
     let start = 0;
     while (true) {
@@ -1711,8 +1712,9 @@ export async function summarizeStory(
     const logError = logger?.error || console.error;
     const scope: LLMTraceScope = { operation: 'story', storyId: story.objectID };
 
+    let articleText: string | undefined;
+    const articleUse = () => (article ? { articleUsed: articleText !== undefined } : {});
     try {
-        let articleText: string | undefined;
         if (article) {
             try {
                 articleText = await condenseArticle(story, article, config, fetcher, trace);
@@ -1854,7 +1856,8 @@ export async function summarizeStory(
                     num_comments: story.num_comments,
                     summary: `API error: ${errorSnippet}`,
                     discussion_summary: `API error: ${errorSnippet}`,
-                    postType
+                    postType,
+                    ...articleUse()
                 };
             }
         }
@@ -1902,7 +1905,7 @@ export async function summarizeStory(
             summary: parsed.summary,
             discussion_summary: parsed.discussion,
             postType,
-            ...(article ? { articleUsed: articleText !== undefined } : {})
+            ...articleUse()
         };
     } catch (e) {
         rethrowTraceSinkError(e);
@@ -1915,7 +1918,8 @@ export async function summarizeStory(
             num_comments: story.num_comments,
             summary: "Error generating summary.",
             discussion_summary: "Error generating summary.",
-            postType: 'article'
+            postType: 'article',
+            ...articleUse()
         };
     }
 }

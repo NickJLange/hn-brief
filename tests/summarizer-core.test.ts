@@ -476,6 +476,7 @@ describe("LLM Interactions & Error Handling", () => {
     // Prefers a line break near the end of the window.
     expect(chunkArticleText("aaaaaaaaa\nbbbbbbbbbb", 10, 2)[0]).toBe("aaaaaaaaa");
     expect(() => chunkArticleText(text, 10, 10)).toThrow("Invalid chunking");
+    expect(() => chunkArticleText(text, 10, 9)).toThrow("Invalid chunking");
   });
 
   test("summarizeStory puts a short article in the prompt and condenses a long one first", async () => {
@@ -522,6 +523,10 @@ describe("LLM Interactions & Error Handling", () => {
     const short = await summarizeStory(linked, [], mockConfig, fetcher, logger, undefined, "Short page");
     expect(short.articleUsed).toBe(true);
     expect((await summarizeStory(linked, [], mockConfig, fetcher, logger)).articleUsed).toBeUndefined();
+    // Notes fail and then the story call errors too: still reported as not used.
+    const allDown = mock(async () => new Response("down", { status: 503 }));
+    const failed = await summarizeStory(linked, [], mockConfig, allDown, logger, undefined, "y".repeat(ARTICLE_CHUNK_CHARS + 1));
+    expect(failed.articleUsed).toBe(false);
   });
 
   test("summarizeStory handles API errors gracefully", async () => {

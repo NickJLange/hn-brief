@@ -34,6 +34,7 @@ Run IDs are the local start time plus UTC offset in `TZ`, for example `2026-09-0
 - Podman 5.x. Verify with `podman --version`.
 - On macOS, a running Podman machine: `podman machine start`.
 - Network access to Lunar Beacon, the LLM host at `http://llm-host.example:11434`.
+- Optional: outbound HTTPS to `api.firecrawl.dev` and a `FIRECRAWL_API_KEY`, to summarize from linked pages.
 - A host data directory for the output. It must be an absolute path.
   - **macOS:** put it under `$HOME`, for example `$HOME/hn-brief-data`. The Podman VM shares only your home directory with the host, so paths under `/tmp` or other locations outside `$HOME` cannot be bind-mounted.
 
@@ -104,7 +105,7 @@ Then inspect the evidence:
 
 - `hn/top-stories.json`: the Algolia story list the run started from.
 - `hn/stories/<id>.json`: the details fetched for each story.
-- `hn/articles.json`: each story's `articleSource`, with the error when a fetch failed.
+- `hn/articles.json`: each story's Firecrawl result (`source`, plus the error when a fetch failed), written before summarizing. The published `articleSource` can differ: a fetched page whose long-article notes failed is published as `fetch_failed`.
 - `hn/articles/<id>.md`: the linked page's text as Firecrawl returned it, for each fetched story.
 - `llm/stories/<id>/` and `llm/digest/`: one directory per story (and one for the digest) holding `request.json`, `response.json`, `error.json`, and `parsed.json`. Retries for that story share the directory and are numbered, for example `attempt-02-request.json`.
 

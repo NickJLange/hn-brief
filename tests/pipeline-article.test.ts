@@ -60,6 +60,9 @@ test("reports empty, non-JSON, and unsuccessful responses with a reason", async 
   const html = createArticleFetcher("k", async () => new Response("<html>oops</html>", { status: 200 }), 0);
   expect(await html(hit("https://example.com/a"))).toEqual({ source: "fetch_failed", error: "Firecrawl HTTP 200: response was not JSON" });
 
+  const nullBody = firecrawl(200, null);
+  expect((await createArticleFetcher("k", nullBody.fetcher, 0)(hit("https://example.com/a"))).error).toBe("Firecrawl HTTP 200");
+
   const refused = firecrawl(200, { success: false, error: "Scrape timed out" });
   expect(await createArticleFetcher("k", refused.fetcher, 0)(hit("https://example.com/a"))).toEqual({
     source: "fetch_failed",
