@@ -109,3 +109,9 @@ test("summarizer --help exits 0 without API keys", async () => {
   expect(result.stdout).toContain("HN-Brief Summarizer");
   expect(result.stderr).not.toContain("No LLM API key");
 });
+
+test("generate refuses half-configured Reddit credentials before doing any work", async () => {
+  const result = await run(["scripts/pipeline/cli.ts", "generate"], { REDDIT_CLIENT_ID: "id", OPENAI_API_KEY: "k", LLM_API_URL: "http://127.0.0.1:9/v1" });
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain("Set both REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET");
+});

@@ -82,6 +82,10 @@ async function main(args: string[]): Promise<void> {
       console.log(PRUNE_USAGE);
       return;
     case "generate": {
+      const { REDDIT_CLIENT_ID: redditId, REDDIT_CLIENT_SECRET: redditSecret } = process.env;
+      if (Boolean(redditId) !== Boolean(redditSecret)) {
+        throw new Error("Set both REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET, or neither.");
+      }
       const { config, provider } = createLLMConfig(process.env);
       const daily = await runGeneration({
         dataRoot,
@@ -89,9 +93,7 @@ async function main(args: string[]): Promise<void> {
         llm: config,
         providerName: provider,
         firecrawlApiKey: process.env.FIRECRAWL_API_KEY || undefined,
-        reddit: process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET
-          ? { clientId: process.env.REDDIT_CLIENT_ID, clientSecret: process.env.REDDIT_CLIENT_SECRET }
-          : undefined
+        reddit: redditId && redditSecret ? { clientId: redditId, clientSecret: redditSecret } : undefined
       });
       console.log(`Generated ${daily.date} (run ${daily.runId}, ${daily.stories.length} stories).`);
       return;
