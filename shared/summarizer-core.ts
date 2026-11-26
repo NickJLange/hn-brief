@@ -1624,18 +1624,20 @@ export async function resolveLLMConfigWithFallback(
 export const ARTICLE_CHUNK_CHARS = 12000;
 export const ARTICLE_CHUNK_OVERLAP = 1000;
 const ARTICLE_NOTES_MAX_TOKENS = 1500;
+/** A chunk may end at a line break only past this fraction of its window. */
+const LINE_BREAK_MIN_FRACTION = 0.8;
 
 /** Splits text into chunks of at most `size` characters, each starting `overlap` characters before the previous one ends. Prefers to cut at a line break. */
 export function chunkArticleText(text: string, size = ARTICLE_CHUNK_CHARS, overlap = ARTICLE_CHUNK_OVERLAP): string[] {
-    // A cut may land as early as 80% into the window, so a larger overlap could move the next chunk backward.
-    if (!(size > 0 && overlap >= 0 && overlap < size * 0.8)) throw new Error(`Invalid chunking: size ${size}, overlap ${overlap}`);
+    // A cut lands past LINE_BREAK_MIN_FRACTION of the window, so a larger overlap could move the next chunk backward.
+    if (!(size > 0 && overlap >= 0 && overlap <= size * LINE_BREAK_MIN_FRACTION)) throw new Error(`Invalid chunking: size ${size}, overlap ${overlap}`);
     const chunks: string[] = [];
     let start = 0;
     while (true) {
         let end = Math.min(start + size, text.length);
         if (end < text.length) {
             const lineBreak = text.lastIndexOf('\n', end);
-            if (lineBreak > start + size * 0.8) end = lineBreak;
+            if (lineBreak > start + size * LINE_BREAK_MIN_FRACTION) end = lineBreak;
         }
         chunks.push(text.slice(start, end));
         if (end >= text.length) return chunks;

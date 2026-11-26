@@ -477,6 +477,7 @@ describe("LLM Interactions & Error Handling", () => {
     expect(chunkArticleText("aaaaaaaaa\nbbbbbbbbbb", 10, 2)[0]).toBe("aaaaaaaaa");
     expect(() => chunkArticleText(text, 10, 10)).toThrow("Invalid chunking");
     expect(() => chunkArticleText(text, 10, 9)).toThrow("Invalid chunking");
+    expect(chunkArticleText(text, 10, 8).join("").length).toBeGreaterThan(text.length);
   });
 
   test("summarizeStory puts a short article in the prompt and condenses a long one first", async () => {

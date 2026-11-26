@@ -51,7 +51,11 @@ export function createArticleFetcher(
         signal: AbortSignal.timeout(PAGE_TIMEOUT_MS + 15_000)
       });
       const NOT_JSON = Symbol("not JSON");
-      const parsed: unknown = await response.json().catch(() => NOT_JSON);
+      // An aborted or timed-out body read is rethrown so the outer handler records the real reason.
+      const parsed: unknown = await response.json().catch(error => {
+        if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) throw error;
+        return NOT_JSON;
+      });
       if (parsed === NOT_JSON) {
         return { source: "fetch_failed", error: `Firecrawl HTTP ${response.status}: response was not JSON` };
       }
