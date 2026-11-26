@@ -14,6 +14,7 @@ import {
   type ProcessedStory,
   type StoryDetails
 } from "../../shared/summarizer-core";
+import { createArticleFetcher, type ArticleResult } from "./article";
 import { acquireDataLock, createRunStore, formatRunId, publishDaily, type RunStore } from "./storage";
 import { createFilesystemTraceRecorder, type FilesystemTraceRecorder } from "./trace";
 import type { BriefingStory, DailyBriefing, GenerateConfig, InferenceStats, PipelineManifest } from "./types";
@@ -22,8 +23,9 @@ export interface GenerationDependencies {
   now(): Date;
   fetchTopStories(): Promise<AlgoliaHit[]>;
   fetchStoryDetails(id: string): Promise<StoryDetails>;
+  fetchArticle(hit: AlgoliaHit): Promise<ArticleResult>;
   processStories(
-    entries: { hit: AlgoliaHit; details: StoryDetails }[],
+    entries: { hit: AlgoliaHit; details: StoryDetails; article?: string }[],
     config: LLMConfig,
     trace: LLMTraceSink
   ): Promise<ProcessedStory[]>;
@@ -33,7 +35,7 @@ export interface GenerationDependencies {
 const MAX_STORY_FAILURES = 12;
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 
-const defaultDependencies: GenerationDependencies = {
+const defaultDependencies: Omit<GenerationDependencies, "fetchArticle"> = {
   now: () => new Date(),
   fetchTopStories: () => fetchTopStories(),
   fetchStoryDetails: id => fetchStoryDetails(id),
@@ -146,7 +148,11 @@ export async function runGeneration(
   config: GenerateConfig,
   overrides: Partial<GenerationDependencies> = {}
 ): Promise<DailyBriefing> {
-  const deps: GenerationDependencies = { ...defaultDependencies, ...overrides };
+  const deps: GenerationDependencies = {
+    ...defaultDependencies,
+    fetchArticle: createArticleFetcher(config.firecrawlApiKey),
+    ...overrides
+  };
   const startedAt = deps.now();
   const release = await acquireDataLock(config.dataRoot, startedAt);
   let store: RunStore | undefined;
@@ -173,8 +179,27 @@ export async function runGeneration(
       });
     });
 
+    // One page at a time: the fetcher paces itself to Firecrawl's rate limit.
+    const articles = await runStage(manifest, store, "articles", deps.now, async () => {
+      const results = new Map<string, ArticleResult>();
+      for (const { hit } of entries) {
+        const result = await deps.fetchArticle(hit);
+        if (result.markdown) await runStore.writeText(`hn/articles/${hit.objectID}.md`, result.markdown);
+        results.set(hit.objectID, result);
+      }
+      await runStore.writeJson(
+        "hn/articles.json",
+        Object.fromEntries([...results].map(([id, { source, error }]) => [id, error ? { source, error } : { source }]))
+      );
+      return results;
+    });
+
     const stories = await runStage(manifest, store, "summarize", deps.now, () =>
-      deps.processStories(entries, config.llm, trace.sink)
+      deps.processStories(
+        entries.map(entry => ({ ...entry, article: articles.get(entry.hit.objectID)?.markdown })),
+        config.llm,
+        trace.sink
+      )
     );
     const storyFailures = stories.filter(needsStoryRepair).length;
     if (storyFailures > MAX_STORY_FAILURES) {
@@ -188,7 +213,11 @@ export async function runGeneration(
     if (isDigestFailureText(digest)) throw new Error(digest);
 
     const commentsById = new Map(entries.map(({ hit, details }) => [hit.objectID, details.children || []]));
-    const briefingStories = stories.map(story => ({ ...story, topComments: selectTopComments(commentsById.get(story.id) ?? []) }));
+    const briefingStories = stories.map(story => ({
+      ...story,
+      articleSource: articles.get(story.id)?.source ?? "disabled",
+      topComments: selectTopComments(commentsById.get(story.id) ?? [])
+    }));
     const daily = createDailyBriefing(config, runId, startedAt, deps.now(), briefingStories, digest);
     const paths = await runStage(manifest, store, "publish", deps.now, () =>
       publishDaily(runStore, daily, {

@@ -13,6 +13,7 @@ export interface RunStore {
   runId: string;
   runDir: string;
   writeJson(relativePath: string, value: unknown): Promise<void>;
+  writeText(relativePath: string, text: string): Promise<void>;
   writeManifest(value: PipelineManifest): Promise<void>;
 }
 
@@ -193,6 +194,7 @@ export async function createRunStore(dataRoot: string, runId: string): Promise<R
     runId,
     runDir,
     writeJson: async (relativePath, value) => atomicWriteJson(resolveInside(runDir, relativePath), value),
+    writeText: async (relativePath, text) => atomicWriteTexts([{ path: resolveInside(runDir, relativePath), text }]),
     writeManifest: value => atomicWriteJson(join(runDir, "manifest.json"), value)
   };
 }

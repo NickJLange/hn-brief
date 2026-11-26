@@ -68,11 +68,17 @@ async function exists(path: string): Promise<boolean> {
 test("publishes a retained run with ordered stories, New York date, window, and stage timings", async () => {
   const config = await makeConfig();
   let tick = 0;
+  const articlesSeen: Record<string, string | undefined> = {};
   const daily = await runGeneration(config, {
     now: () => (tick++ === 0 ? startedAt : new Date(startedAt.getTime() + 5000)),
     fetchTopStories: async () => [hitA, hitB],
     fetchStoryDetails: async id => (id === "101" ? detailsA : detailsB),
-    processStories: async entries => entries.map(({ hit }) => processed(hit)),
+    fetchArticle: async hit =>
+      hit.objectID === "101" ? { source: "fetched", markdown: "# Alpha page" } : { source: "fetch_failed", error: "HTTP 403" },
+    processStories: async entries => {
+      for (const { hit, article } of entries) articlesSeen[hit.objectID] = article;
+      return entries.map(({ hit }) => processed(hit));
+    },
     generateDigest: async stories => `Digest for ${stories[0]?.title} then ${stories[1]?.title}`
   });
 
@@ -94,11 +100,19 @@ test("publishes a retained run with ordered stories, New York date, window, and 
   expect(storyA!.topComments[0]!.text).toContain("Short");
   expect(storyA!.topComments[0]!.text).not.toContain("<p>");
   expect(storyB!.topComments).toEqual([]);
+  expect(articlesSeen).toEqual({ "101": "# Alpha page", "202": undefined });
+  expect(daily.stories.map(story => story.articleSource)).toEqual(["fetched", "fetch_failed"]);
 
   const runDir = join(config.dataRoot, "runs", daily.runId);
   expect(await Bun.file(join(runDir, "hn/top-stories.json")).json()).toEqual([hitA, hitB]);
   expect(await Bun.file(join(runDir, "hn/stories/101.json")).json()).toEqual(detailsA);
   expect(await Bun.file(join(runDir, "hn/stories/202.json")).json()).toEqual(detailsB);
+  expect(await readFile(join(runDir, "hn/articles/101.md"), "utf8")).toBe("# Alpha page");
+  expect(await exists(join(runDir, "hn/articles/202.md"))).toBe(false);
+  expect(await Bun.file(join(runDir, "hn/articles.json")).json()).toEqual({
+    "101": { source: "fetched" },
+    "202": { source: "fetch_failed", error: "HTTP 403" }
+  });
   expect(await Bun.file(join(config.dataRoot, "latest.json")).json()).toEqual({
     date: "2026-09-08",
     runId: daily.runId,
@@ -109,7 +123,7 @@ test("publishes a retained run with ordered stories, New York date, window, and 
 
   const manifest = await Bun.file(join(runDir, "manifest.json")).json();
   expect(manifest.status).toBe("complete");
-  expect(Object.keys(manifest.stages).sort()).toEqual(["digest", "fetch", "publish", "summarize"]);
+  expect(Object.keys(manifest.stages).sort()).toEqual(["articles", "digest", "fetch", "publish", "summarize"]);
   expect(manifest.stages.fetch.elapsedMs).toBeGreaterThanOrEqual(0);
   expect(manifest.finalPaths.json).toBe("daily/2026/09/08.json");
   expect(JSON.stringify(manifest)).not.toContain("secret-key");
@@ -133,7 +147,7 @@ test("a digest failure keeps run evidence but publishes nothing and releases the
   expect(manifest.status).toBe("failed");
   expect(manifest.error).toEqual({ name: "Error", message: "digest model exploded" });
   expect(manifest.finalPaths).toBeUndefined();
-  expect(Object.keys(manifest.stages).sort()).toEqual(["digest", "fetch", "summarize"]);
+  expect(Object.keys(manifest.stages).sort()).toEqual(["articles", "digest", "fetch", "summarize"]);
   expect(await Bun.file(join(runDir, "hn/top-stories.json")).json()).toEqual([hitA, hitB]);
   expect(await exists(join(config.dataRoot, "latest.json"))).toBe(false);
   expect(await exists(join(config.dataRoot, "archive.json"))).toBe(false);

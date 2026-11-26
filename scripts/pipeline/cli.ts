@@ -16,8 +16,9 @@ Options:
   -h, --help                            Show this help
 
 Environment:
-  DATA_DIR  Data root (default: data)
-  TZ        Time zone for run IDs and daily dates (default: America/New_York)`;
+  DATA_DIR           Data root (default: data)
+  TZ                 Time zone for run IDs and daily dates (default: America/New_York)
+  FIRECRAWL_API_KEY  Optional: fetch each story's linked page through Firecrawl and summarize from it`;
 
 const PRUNE_USAGE = `Usage: bun run pipeline -- prune (--before YYYY-MM-DD | --older-than-days N) [--confirm]
 
@@ -80,7 +81,13 @@ async function main(args: string[]): Promise<void> {
       return;
     case "generate": {
       const { config, provider } = createLLMConfig(process.env);
-      const daily = await runGeneration({ dataRoot, timeZone, llm: config, providerName: provider });
+      const daily = await runGeneration({
+        dataRoot,
+        timeZone,
+        llm: config,
+        providerName: provider,
+        firecrawlApiKey: process.env.FIRECRAWL_API_KEY || undefined
+      });
       console.log(`Generated ${daily.date} (run ${daily.runId}, ${daily.stories.length} stories).`);
       return;
     }

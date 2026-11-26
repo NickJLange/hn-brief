@@ -6,8 +6,11 @@ export interface PipelineQuality {
   digestValid: boolean;
 }
 
-/** A published story: its summaries plus the comments the summary was written from. */
-export type BriefingStory = ProcessedStory & { topComments: TopComment[] };
+/** Whether the summary was written from the linked page: fetched, or why not. */
+export type ArticleSource = "fetched" | "pdf_skipped" | "fetch_failed" | "self_post" | "disabled";
+
+/** A published story: its summaries, whether the linked page was read, and the comments the summary was written from. */
+export type BriefingStory = ProcessedStory & { articleSource: ArticleSource; topComments: TopComment[] };
 
 export interface DailyBriefing {
   schemaVersion: 1;
@@ -48,7 +51,7 @@ export interface PipelineManifest {
   completedAt?: string;
   source: { query: "last-24-hours"; windowStart: string; windowEnd: string };
   model: { provider: string; endpoint: string; name: string };
-  stages: Partial<Record<"fetch" | "summarize" | "digest" | "publish", StageTiming>>;
+  stages: Partial<Record<"fetch" | "articles" | "summarize" | "digest" | "publish", StageTiming>>;
   inference: InferenceStats;
   quality?: PipelineQuality;
   error?: { name: string; message: string };
@@ -60,4 +63,6 @@ export interface GenerateConfig {
   timeZone: string;
   llm: LLMConfig;
   providerName: string;
+  /** Firecrawl key for fetching linked pages; without it, stories are summarized from title and comments only. */
+  firecrawlApiKey?: string;
 }
