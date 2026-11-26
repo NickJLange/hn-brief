@@ -18,7 +18,7 @@ const REDDIT_TOP_COMMENTS = 10;
 
 function isRedditHost(url: string): boolean {
   try {
-    return /(^|\.)reddit\.com$|^redd\.it$/i.test(new URL(url).hostname);
+    return /(^|\.)reddit\.com$|(^|\.)redd\.it$/i.test(new URL(url).hostname);
   } catch {
     return false;
   }
@@ -85,7 +85,8 @@ function createRedditReader(apifyToken: string, fetcher: FetchLike) {
         }
       );
       const items = await readJson(response, undefined);
-      if (!response.ok || !Array.isArray(items)) return { source: "fetch_failed", error: `Apify HTTP ${response.status}` };
+      if (!response.ok) return { source: "fetch_failed", error: `Apify HTTP ${response.status}` };
+      if (!Array.isArray(items)) return { source: "fetch_failed", error: "Apify returned no dataset items" };
       const markdown = formatRedditPost(items as ApifyRedditItem[]);
       return markdown ? { source: "fetched", markdown } : { source: "fetch_failed", error: "Reddit post not found" };
     } catch (error) {

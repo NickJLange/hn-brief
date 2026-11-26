@@ -123,7 +123,21 @@ test("Reddit links without a token are not sent to Firecrawl, and Apify failures
     source: "fetch_failed",
     error: "Not a Reddit post link"
   });
+  expect(await createArticleFetcher("fc-key", fc.fetcher, 0)(hit("https://i.redd.it/abc.png"))).toEqual({
+    source: "fetch_failed",
+    error: "Not a Reddit post link"
+  });
   expect(fc.calls).toHaveLength(0);
+
+  const notArray = createArticleFetcher(undefined, async () => new Response("{}", { status: 201 }), 0, "t");
+  expect(await notArray(hit("https://www.reddit.com/r/x/comments/abc/t/"))).toEqual({ source: "fetch_failed", error: "Apify returned no dataset items" });
+
+  const many = createArticleFetcher(undefined, async () => new Response(JSON.stringify([
+    { type: "post", title: "Busy", subreddit: "x", author: "op", isSelf: true, selfText: "" },
+    ...Array.from({ length: 15 }, (_, i) => ({ type: "comment", author: `c${i}`, body: `comment ${i}`, score: 0, depth: 0 }))
+  ]), { status: 201 }), 0, "t");
+  const busy = await many(hit("https://www.reddit.com/r/x/comments/abc/t/"));
+  expect(busy.markdown!.match(/^u\//gm)).toHaveLength(10);
 
   const unauthorized = createArticleFetcher(undefined, async () => new Response("{}", { status: 401 }), 0, "bad");
   expect(await unauthorized(hit("https://www.reddit.com/r/x/comments/abc/t/"))).toEqual({ source: "fetch_failed", error: "Apify HTTP 401" });
