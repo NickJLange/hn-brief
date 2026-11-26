@@ -28,6 +28,7 @@ test("never calls Firecrawl for self-posts, .pdf links, or without a key", async
   const withKey = createArticleFetcher("fc-key", fc.fetcher, 0);
   expect(await withKey(hit())).toEqual({ source: "self_post" });
   expect(await withKey(hit("https://example.com/paper.PDF?download=1"))).toEqual({ source: "pdf_skipped" });
+  expect(await withKey(hit("https://arxiv.org/pdf/2611.01234v2"))).toEqual({ source: "pdf_skipped" });
   expect(await createArticleFetcher(undefined, fc.fetcher, 0)(hit("https://example.com/post"))).toEqual({ source: "disabled" });
   expect(fc.calls).toHaveLength(0);
 });
@@ -50,4 +51,33 @@ test("reports a PDF served from a non-.pdf URL as skipped, and failures as fetch
 
   const down = createArticleFetcher("k", async () => { throw new Error("network down"); }, 0);
   expect(await down(hit("https://example.com/a"))).toEqual({ source: "fetch_failed", error: "network down" });
+});
+
+test("reports empty, non-JSON, and unsuccessful responses with a reason", async () => {
+  const empty = firecrawl(200, { success: true, data: { markdown: "  ", metadata: { statusCode: 200 } } });
+  expect(await createArticleFetcher("k", empty.fetcher, 0)(hit("https://example.com/a"))).toEqual({ source: "fetch_failed", error: "Page had no text" });
+
+  const html = createArticleFetcher("k", async () => new Response("<html>oops</html>", { status: 200 }), 0);
+  expect(await html(hit("https://example.com/a"))).toEqual({ source: "fetch_failed", error: "Firecrawl HTTP 200: response was not JSON" });
+
+  const refused = firecrawl(200, { success: false, error: "Scrape timed out" });
+  expect(await createArticleFetcher("k", refused.fetcher, 0)(hit("https://example.com/a"))).toEqual({
+    source: "fetch_failed",
+    error: "Firecrawl HTTP 200: Scrape timed out"
+  });
+});
+
+test("spaces consecutive Firecrawl calls by the minimum interval, but not skipped stories", async () => {
+  const times: number[] = [];
+  const fetchArticle = createArticleFetcher("k", async () => {
+    times.push(Date.now());
+    return new Response(JSON.stringify({ success: true, data: { markdown: "x" } }), { status: 200 });
+  }, 80);
+  await fetchArticle(hit("https://example.com/1"));
+  const beforeSkip = Date.now();
+  await fetchArticle(hit());
+  expect(Date.now() - beforeSkip).toBeLessThan(40);
+  await fetchArticle(hit("https://example.com/2"));
+  expect(times).toHaveLength(2);
+  expect(times[1]! - times[0]!).toBeGreaterThanOrEqual(75);
 });

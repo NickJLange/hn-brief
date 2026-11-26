@@ -14,7 +14,10 @@ const MIN_INTERVAL_MS = 6_500;
 
 export function isPdfUrl(url: string): boolean {
   try {
-    return new URL(url).pathname.toLowerCase().endsWith(".pdf");
+    const { hostname, pathname } = new URL(url);
+    const path = pathname.toLowerCase();
+    // arXiv serves PDFs from extensionless /pdf/<id> paths.
+    return path.endsWith(".pdf") || (/(^|\.)arxiv\.org$/i.test(hostname) && path.startsWith("/pdf/"));
   } catch {
     return false;
   }
@@ -50,6 +53,7 @@ export function createArticleFetcher(
       const body = (await response.json().catch(() => undefined)) as
         | { success?: boolean; error?: string; data?: { markdown?: string; metadata?: { statusCode?: number; contentType?: string } } }
         | undefined;
+      if (response.ok && !body) return { source: "fetch_failed", error: `Firecrawl HTTP ${response.status}: response was not JSON` };
       if (!response.ok || !body?.success) {
         return { source: "fetch_failed", error: `Firecrawl HTTP ${response.status}${body?.error ? `: ${body.error}` : ""}` };
       }

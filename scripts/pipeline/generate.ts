@@ -213,11 +213,15 @@ export async function runGeneration(
     if (isDigestFailureText(digest)) throw new Error(digest);
 
     const commentsById = new Map(entries.map(({ hit, details }) => [hit.objectID, details.children || []]));
-    const briefingStories = stories.map(story => ({
-      ...story,
-      articleSource: articles.get(story.id)?.source ?? "disabled",
-      topComments: selectTopComments(commentsById.get(story.id) ?? [])
-    }));
+    const briefingStories = stories.map(({ articleUsed, ...story }) => {
+      const source = articles.get(story.id)?.source ?? "disabled";
+      return {
+        ...story,
+        // A fetched page whose notes failed was not used for the summary.
+        articleSource: source === "fetched" && articleUsed === false ? "fetch_failed" as const : source,
+        topComments: selectTopComments(commentsById.get(story.id) ?? [])
+      };
+    });
     const daily = createDailyBriefing(config, runId, startedAt, deps.now(), briefingStories, digest);
     const paths = await runStage(manifest, store, "publish", deps.now, () =>
       publishDaily(runStore, daily, {

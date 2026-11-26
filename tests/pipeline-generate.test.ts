@@ -278,3 +278,18 @@ test("a failed detail fetch waits for sibling fetches to settle and records the 
   expect((await Bun.file(join(runDir, "manifest.json")).json()).status).toBe("failed");
   expect(await exists(join(config.dataRoot, ".generate.lock"))).toBe(false);
 });
+
+test("a fetched page whose notes failed is published as fetch_failed, without the internal flag", async () => {
+  const config = await makeConfig();
+  const daily = await runGeneration(config, {
+    now: () => startedAt,
+    fetchTopStories: async () => [hitA, hitB],
+    fetchStoryDetails: async id => (id === "101" ? detailsA : detailsB),
+    fetchArticle: async () => ({ source: "fetched", markdown: "page" }),
+    processStories: async entries =>
+      entries.map(({ hit }) => ({ ...processed(hit), articleUsed: hit.objectID === "202" })),
+    generateDigest: async () => "Digest of two stories"
+  });
+  expect(daily.stories.map(story => story.articleSource)).toEqual(["fetch_failed", "fetched"]);
+  expect(daily.stories.some(story => "articleUsed" in story)).toBe(false);
+});

@@ -475,6 +475,7 @@ describe("LLM Interactions & Error Handling", () => {
     expect(chunks).toEqual(["abcdefghij", "hijklmnopq", "opqrstuvwx", "vwxyz"]);
     // Prefers a line break near the end of the window.
     expect(chunkArticleText("aaaaaaaaa\nbbbbbbbbbb", 10, 2)[0]).toBe("aaaaaaaaa");
+    expect(() => chunkArticleText(text, 10, 10)).toThrow("Invalid chunking");
   });
 
   test("summarizeStory puts a short article in the prompt and condenses a long one first", async () => {
@@ -501,6 +502,26 @@ describe("LLM Interactions & Error Handling", () => {
     expect(finalPrompt).toContain("Part 1/3:\nnotes 1");
     expect(finalPrompt).toContain("Part 3/3:\nnotes 3");
     expect(finalPrompt).not.toContain("xxxxxxxxxx");
+  });
+
+  test("summarizeStory falls back to title and comments when article notes fail, and says so", async () => {
+    let calls = 0;
+    const fetcher = mock(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      calls++;
+      const isNotes = String(JSON.parse(String(init!.body)).messages[1].content).startsWith("This is part");
+      return isNotes
+        ? new Response("upstream down", { status: 503 })
+        : new Response(JSON.stringify({ choices: [{ message: { content: VALID_XML_RESPONSE } }] }), { status: 200 });
+    });
+    const logger = { info: mock(() => {}), error: mock(() => {}) };
+    const linked = { ...mockStory, url: "https://example.com/a" };
+    const result = await summarizeStory(linked, [], mockConfig, fetcher, logger, undefined, "y".repeat(ARTICLE_CHUNK_CHARS + 1));
+    expect(result.summary).toBe("Valid content summary.");
+    expect(result.articleUsed).toBe(false);
+    expect(calls).toBe(2);
+    const short = await summarizeStory(linked, [], mockConfig, fetcher, logger, undefined, "Short page");
+    expect(short.articleUsed).toBe(true);
+    expect((await summarizeStory(linked, [], mockConfig, fetcher, logger)).articleUsed).toBeUndefined();
   });
 
   test("summarizeStory handles API errors gracefully", async () => {
