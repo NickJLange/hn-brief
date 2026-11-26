@@ -150,7 +150,7 @@ export async function runGeneration(
 ): Promise<DailyBriefing> {
   const deps: GenerationDependencies = {
     ...defaultDependencies,
-    fetchArticle: createArticleFetcher(config.firecrawlApiKey, undefined, undefined, config.reddit),
+    fetchArticle: createArticleFetcher(config.firecrawlApiKey, undefined, undefined, config.apifyToken),
     ...overrides
   };
   const startedAt = deps.now();

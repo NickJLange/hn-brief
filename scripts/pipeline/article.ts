@@ -12,14 +12,8 @@ const PAGE_TIMEOUT_MS = 30_000;
 // Firecrawl's free plan allows 10 scrapes a minute.
 const MIN_INTERVAL_MS = 6_500;
 
-export interface RedditCredentials {
-  clientId: string;
-  clientSecret: string;
-}
-
-const REDDIT_TOKEN_URL = "https://www.reddit.com/api/v1/access_token";
-const REDDIT_API = "https://oauth.reddit.com";
-const REDDIT_USER_AGENT = "linux:hn-brief:1.0 (personal daily digest)";
+const APIFY_REDDIT_ACTOR = "automation-lab~reddit-scraper";
+const APIFY_RUN_TIMEOUT_S = 120;
 const REDDIT_TOP_COMMENTS = 10;
 
 function isRedditHost(url: string): boolean {
@@ -40,7 +34,7 @@ export function redditPostId(url: string): string | undefined {
   return undefined;
 }
 
-interface RedditThing { kind: string; data: Record<string, any> }
+interface ApifyRedditItem { type?: string; [field: string]: any }
 
 const isRemoved = (text: unknown) => text === "[deleted]" || text === "[removed]";
 
@@ -52,52 +46,47 @@ async function readJson<T>(response: Response, fallback: T): Promise<unknown | T
   });
 }
 
-function formatRedditPost(listings: Array<{ data: { children: RedditThing[] } }>): string | undefined {
-  const post = listings[0]?.data.children[0]?.data;
-  if (!post) return undefined;
-  const lines = [`# ${post.title}`, "", `Posted in r/${post.subreddit} by u/${post.author} (score ${post.score}).`];
-  if (!post.is_self && post.url) lines.push(`Linked URL: ${post.url}`);
-  if (post.selftext?.trim() && !isRemoved(post.selftext.trim())) lines.push("", post.selftext.trim());
-  const comments = (listings[1]?.data.children ?? [])
-    .filter(c => c.kind === "t1" && c.data.body && !isRemoved(c.data.body))
-    .sort((a, b) => b.data.score - a.data.score)
+function formatRedditPost(items: ApifyRedditItem[]): string | undefined {
+  const post = items.find(item => item.type === "post");
+  if (!post?.title) return undefined;
+  const lines = [`# ${post.title}`, "", `Posted in r/${post.subreddit} by u/${post.author}.`];
+  if (!post.isSelf && post.link) lines.push(`Linked URL: ${post.link}`);
+  const body = String(post.selfText ?? "").trim();
+  if (body && !isRemoved(body)) lines.push("", body);
+  // Scores are best-effort (often 0), so keep the scraper's order and only lift known higher scores.
+  const comments = items
+    .filter(item => item.type === "comment" && item.body && !isRemoved(item.body) && (item.depth ?? 0) <= 0)
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => (b.item.score ?? 0) - (a.item.score ?? 0) || a.index - b.index)
     .slice(0, REDDIT_TOP_COMMENTS);
   if (comments.length) {
     lines.push("", "## Top Reddit comments");
-    for (const c of comments) lines.push("", `u/${c.data.author} (score ${c.data.score}):`, c.data.body.trim());
+    for (const { item } of comments) lines.push("", `u/${item.author}:`, String(item.body).trim());
   }
   return lines.join("\n");
 }
 
-/** Reads a Reddit post and its top comments through the official API, with an app-only token reused until it expires. */
-function createRedditReader(credentials: RedditCredentials, fetcher: FetchLike) {
-  let token: { value: string; expiresAt: number } | undefined;
-  const getToken = async () => {
-    if (token && Date.now() < token.expiresAt) return token.value;
-    const response = await fetcher(REDDIT_TOKEN_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${btoa(`${credentials.clientId}:${credentials.clientSecret}`)}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": REDDIT_USER_AGENT
-      },
-      body: "grant_type=client_credentials",
-      signal: AbortSignal.timeout(PAGE_TIMEOUT_MS)
-    });
-    const body = (await readJson(response, undefined)) as { access_token?: string; expires_in?: number } | undefined;
-    if (!response.ok || !body?.access_token) throw new Error(`Reddit token HTTP ${response.status}`);
-    // Renew a minute early so a token never expires mid-request.
-    token = { value: body.access_token, expiresAt: Date.now() + ((body.expires_in ?? 3600) - 60) * 1000 };
-    return token.value;
-  };
+/** Reads a Reddit post and its top-level comments through Apify's Reddit scraper, which gets past Reddit's block. */
+function createRedditReader(apifyToken: string, fetcher: FetchLike) {
   return async (postId: string): Promise<ArticleResult> => {
     try {
-      const response = await fetcher(`${REDDIT_API}/comments/${postId}?raw_json=1&sort=top&depth=1&limit=${REDDIT_TOP_COMMENTS * 3}`, {
-        headers: { Authorization: `Bearer ${await getToken()}`, "User-Agent": REDDIT_USER_AGENT },
-        signal: AbortSignal.timeout(PAGE_TIMEOUT_MS)
-      });
-      if (!response.ok) return { source: "fetch_failed", error: `Reddit HTTP ${response.status}` };
-      const markdown = formatRedditPost(await response.json());
+      const response = await fetcher(
+        `https://api.apify.com/v2/acts/${APIFY_REDDIT_ACTOR}/run-sync-get-dataset-items?timeout=${APIFY_RUN_TIMEOUT_S}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apifyToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            urls: [`https://www.reddit.com/comments/${postId}/`],
+            includeComments: true,
+            maxCommentsPerPost: REDDIT_TOP_COMMENTS * 3,
+            commentDepth: 1
+          }),
+          signal: AbortSignal.timeout((APIFY_RUN_TIMEOUT_S + 30) * 1000)
+        }
+      );
+      const items = await readJson(response, undefined);
+      if (!response.ok || !Array.isArray(items)) return { source: "fetch_failed", error: `Apify HTTP ${response.status}` };
+      const markdown = formatRedditPost(items as ApifyRedditItem[]);
       return markdown ? { source: "fetched", markdown } : { source: "fetch_failed", error: "Reddit post not found" };
     } catch (error) {
       return { source: "fetch_failed", error: error instanceof Error ? error.message : String(error) };
@@ -117,7 +106,7 @@ export function isPdfUrl(url: string): boolean {
 }
 
 /**
- * Returns a function that fetches a story's linked page as Markdown: Reddit posts through the Reddit API,
+ * Returns a function that fetches a story's linked page as Markdown: Reddit posts through Apify's Reddit scraper,
  * everything else through Firecrawl, one call at a time. Self-posts and PDFs are never sent; without a key
  * for the matching service nothing is fetched.
  */
@@ -125,14 +114,14 @@ export function createArticleFetcher(
   apiKey: string | undefined,
   fetcher: FetchLike = fetch,
   minIntervalMs = MIN_INTERVAL_MS,
-  reddit?: RedditCredentials
+  apifyToken?: string
 ): (hit: AlgoliaHit) => Promise<ArticleResult> {
   let lastCallAt = -Infinity;
-  const readReddit = reddit ? createRedditReader(reddit, fetcher) : undefined;
+  const readReddit = apifyToken ? createRedditReader(apifyToken, fetcher) : undefined;
   return async hit => {
     if (!hit.url) return { source: "self_post" };
     if (isPdfUrl(hit.url)) return { source: "pdf_skipped" };
-    // Reddit blocks Firecrawl and anonymous requests, so its links only go through the API.
+    // Reddit blocks Firecrawl and anonymous requests, so its links only go through Apify.
     if (isRedditHost(hit.url)) {
       const postId = redditPostId(hit.url);
       if (!postId) return { source: "fetch_failed", error: "Not a Reddit post link" };

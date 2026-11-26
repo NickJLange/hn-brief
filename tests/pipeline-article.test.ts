@@ -85,43 +85,38 @@ test("spaces consecutive Firecrawl calls by the minimum interval, but not skippe
   expect(times[1]! - times[0]!).toBeGreaterThanOrEqual(75);
 });
 
-test("reads Reddit links through the API with one reused token, never through Firecrawl", async () => {
+test("reads Reddit post links through Apify, never through Firecrawl", async () => {
   const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {
     calls.push({ url: String(url), init });
-    if (String(url).endsWith("/access_token")) return new Response(JSON.stringify({ access_token: "tok", expires_in: 86400 }), { status: 200 });
     return new Response(JSON.stringify([
-      { data: { children: [{ kind: "t3", data: { title: "Rumor", subreddit: "singularity", author: "op", score: 900, is_self: true, selftext: "Body & more" } }] } },
-      { data: { children: [
-        { kind: "t1", data: { author: "low", score: 3, body: "meh" } },
-        { kind: "t1", data: { author: "high", score: 50, body: "Insightful" } },
-        { kind: "t1", data: { author: "gone", score: 99, body: "[deleted]" } },
-        { kind: "more", data: {} }
-      ] } }
-    ]), { status: 200 });
+      { type: "post", title: "Rumor", subreddit: "singularity", author: "op", isSelf: true, selfText: "Body & more" },
+      { type: "comment", author: "first", body: "Unscored but first", score: 0, depth: 0 },
+      { type: "comment", author: "reply", body: "Nested reply", score: 500, depth: 1 },
+      { type: "comment", author: "high", body: "Insightful", score: 50, depth: 0 },
+      { type: "comment", author: "gone", body: "[deleted]", score: 99, depth: 0 }
+    ]), { status: 201 });
   };
-  const fetchArticle = createArticleFetcher("fc-key", fetcher, 0, { clientId: "id", clientSecret: "secret" });
+  const fetchArticle = createArticleFetcher("fc-key", fetcher, 0, "apify-token");
   const result = await fetchArticle(hit("https://www.reddit.com/r/singularity/comments/1y59ef1/rumor_that/"));
   await fetchArticle(hit("https://redd.it/abc123"));
 
   expect(result.source).toBe("fetched");
-  expect(result.markdown).toContain("# Rumor");
-  expect(result.markdown).toContain("Body & more");
-  expect(result.markdown).toContain("u/high");
-  expect(result.markdown).toContain("u/low");
-  expect(result.markdown!.indexOf("u/high")).toBeLessThan(result.markdown!.indexOf("u/low"));
-  expect(result.markdown).not.toContain("[deleted]");
-  expect(calls.map(c => c.url.split("?")[0])).toEqual([
-    "https://www.reddit.com/api/v1/access_token",
-    "https://oauth.reddit.com/comments/1y59ef1",
-    "https://oauth.reddit.com/comments/abc123"
-  ]);
-  expect((calls[0]!.init!.headers as Record<string, string>).Authorization).toBe(`Basic ${btoa("id:secret")}`);
-  expect((calls[1]!.init!.headers as Record<string, string>).Authorization).toBe("Bearer tok");
-  expect(calls.some(c => c.url.includes("firecrawl"))).toBe(false);
+  const md = result.markdown!;
+  expect(md).toContain("# Rumor");
+  expect(md).toContain("Body & more");
+  expect(md).toContain("u/high");
+  expect(md).toContain("u/first");
+  expect(md.indexOf("u/high")).toBeLessThan(md.indexOf("u/first"));
+  expect(md).not.toContain("Nested reply");
+  expect(md).not.toContain("[deleted]");
+  expect(calls).toHaveLength(2);
+  expect(calls.every(c => c.url.startsWith("https://api.apify.com/v2/acts/automation-lab~reddit-scraper/run-sync-get-dataset-items"))).toBe(true);
+  expect((calls[0]!.init!.headers as Record<string, string>).Authorization).toBe("Bearer apify-token");
+  expect(JSON.parse(String(calls[1]!.init!.body)).urls).toEqual(["https://www.reddit.com/comments/abc123/"]);
 });
 
-test("Reddit links without credentials are not sent to Firecrawl, and API errors are reported", async () => {
+test("Reddit links without a token are not sent to Firecrawl, and Apify failures are reported", async () => {
   const fc = firecrawl(200, { success: true, data: { markdown: "x" } });
   expect(await createArticleFetcher("fc-key", fc.fetcher, 0)(hit("https://old.reddit.com/r/x/comments/abc/t/"))).toEqual({ source: "disabled" });
   expect(await createArticleFetcher("fc-key", fc.fetcher, 0)(hit("https://www.reddit.com/r/programming/"))).toEqual({
@@ -130,26 +125,16 @@ test("Reddit links without credentials are not sent to Firecrawl, and API errors
   });
   expect(fc.calls).toHaveLength(0);
 
-  const badToken = createArticleFetcher(undefined, async () => new Response("{}", { status: 401 }), 0, { clientId: "id", clientSecret: "bad" });
-  expect(await badToken(hit("https://www.reddit.com/r/x/comments/abc/t/"))).toEqual({ source: "fetch_failed", error: "Reddit token HTTP 401" });
-});
+  const unauthorized = createArticleFetcher(undefined, async () => new Response("{}", { status: 401 }), 0, "bad");
+  expect(await unauthorized(hit("https://www.reddit.com/r/x/comments/abc/t/"))).toEqual({ source: "fetch_failed", error: "Apify HTTP 401" });
 
-test("renews an expired Reddit token and drops a removed post body", async () => {
-  const tokenCalls: number[] = [];
-  const fetcher = async (url: RequestInfo | URL) => {
-    if (String(url).endsWith("/access_token")) {
-      tokenCalls.push(tokenCalls.length);
-      // 60 s is inside the one-minute early-renewal margin, so the token counts as expired at once.
-      return new Response(JSON.stringify({ access_token: `tok${tokenCalls.length}`, expires_in: 60 }), { status: 200 });
-    }
-    return new Response(JSON.stringify([
-      { data: { children: [{ kind: "t3", data: { title: "Gone", subreddit: "x", author: "op", score: 1, is_self: true, selftext: "[removed]" } }] } },
-      { data: { children: [] } }
-    ]), { status: 200 });
-  };
-  const fetchArticle = createArticleFetcher(undefined, fetcher, 0, { clientId: "id", clientSecret: "s" });
-  const first = await fetchArticle(hit("https://www.reddit.com/r/x/comments/a1/t/"));
-  await fetchArticle(hit("https://www.reddit.com/r/x/comments/b2/t/"));
-  expect(tokenCalls).toHaveLength(2);
-  expect(first.markdown).not.toContain("[removed]");
+  const removed = createArticleFetcher(undefined, async () => new Response(JSON.stringify([
+    { type: "post", title: "Gone", subreddit: "x", author: "op", isSelf: true, selfText: "[removed]" }
+  ]), { status: 201 }), 0, "t");
+  const gone = await removed(hit("https://www.reddit.com/r/x/comments/a1/t/"));
+  expect(gone.source).toBe("fetched");
+  expect(gone.markdown).not.toContain("[removed]");
+
+  const empty = createArticleFetcher(undefined, async () => new Response("[]", { status: 201 }), 0, "t");
+  expect(await empty(hit("https://www.reddit.com/r/x/comments/a1/t/"))).toEqual({ source: "fetch_failed", error: "Reddit post not found" });
 });

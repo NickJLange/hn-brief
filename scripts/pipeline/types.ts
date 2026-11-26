@@ -65,6 +65,6 @@ export interface GenerateConfig {
   providerName: string;
   /** Firecrawl key for fetching linked pages; without it, stories are summarized from title and comments only. */
   firecrawlApiKey?: string;
-  /** Reddit app credentials for reading reddit.com links, which Firecrawl cannot fetch. */
-  reddit?: { clientId: string; clientSecret: string };
+  /** Apify token for reading Reddit post links, which Firecrawl and anonymous requests cannot fetch. */
+  apifyToken?: string;
 }
