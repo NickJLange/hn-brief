@@ -42,14 +42,24 @@ export function redditPostId(url: string): string | undefined {
 
 interface RedditThing { kind: string; data: Record<string, any> }
 
+const isRemoved = (text: unknown) => text === "[deleted]" || text === "[removed]";
+
+/** Reads a JSON body, returning `fallback` when it does not parse; aborted or timed-out reads are rethrown. */
+async function readJson<T>(response: Response, fallback: T): Promise<unknown | T> {
+  return response.json().catch(error => {
+    if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) throw error;
+    return fallback;
+  });
+}
+
 function formatRedditPost(listings: Array<{ data: { children: RedditThing[] } }>): string | undefined {
   const post = listings[0]?.data.children[0]?.data;
   if (!post) return undefined;
   const lines = [`# ${post.title}`, "", `Posted in r/${post.subreddit} by u/${post.author} (score ${post.score}).`];
   if (!post.is_self && post.url) lines.push(`Linked URL: ${post.url}`);
-  if (post.selftext?.trim()) lines.push("", post.selftext.trim());
+  if (post.selftext?.trim() && !isRemoved(post.selftext.trim())) lines.push("", post.selftext.trim());
   const comments = (listings[1]?.data.children ?? [])
-    .filter(c => c.kind === "t1" && c.data.body && c.data.body !== "[deleted]" && c.data.body !== "[removed]")
+    .filter(c => c.kind === "t1" && c.data.body && !isRemoved(c.data.body))
     .sort((a, b) => b.data.score - a.data.score)
     .slice(0, REDDIT_TOP_COMMENTS);
   if (comments.length) {
@@ -74,7 +84,7 @@ function createRedditReader(credentials: RedditCredentials, fetcher: FetchLike) 
       body: "grant_type=client_credentials",
       signal: AbortSignal.timeout(PAGE_TIMEOUT_MS)
     });
-    const body = (await response.json().catch(() => undefined)) as { access_token?: string; expires_in?: number } | undefined;
+    const body = (await readJson(response, undefined)) as { access_token?: string; expires_in?: number } | undefined;
     if (!response.ok || !body?.access_token) throw new Error(`Reddit token HTTP ${response.status}`);
     // Renew a minute early so a token never expires mid-request.
     token = { value: body.access_token, expiresAt: Date.now() + ((body.expires_in ?? 3600) - 60) * 1000 };
@@ -144,10 +154,7 @@ export function createArticleFetcher(
       });
       const NOT_JSON = Symbol("not JSON");
       // An aborted or timed-out body read is rethrown so the outer handler records the real reason.
-      const parsed: unknown = await response.json().catch(error => {
-        if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) throw error;
-        return NOT_JSON;
-      });
+      const parsed = await readJson(response, NOT_JSON);
       if (parsed === NOT_JSON) {
         return { source: "fetch_failed", error: `Firecrawl HTTP ${response.status}: response was not JSON` };
       }

@@ -107,6 +107,8 @@ test("reads Reddit links through the API with one reused token, never through Fi
   expect(result.source).toBe("fetched");
   expect(result.markdown).toContain("# Rumor");
   expect(result.markdown).toContain("Body & more");
+  expect(result.markdown).toContain("u/high");
+  expect(result.markdown).toContain("u/low");
   expect(result.markdown!.indexOf("u/high")).toBeLessThan(result.markdown!.indexOf("u/low"));
   expect(result.markdown).not.toContain("[deleted]");
   expect(calls.map(c => c.url.split("?")[0])).toEqual([
@@ -130,4 +132,24 @@ test("Reddit links without credentials are not sent to Firecrawl, and API errors
 
   const badToken = createArticleFetcher(undefined, async () => new Response("{}", { status: 401 }), 0, { clientId: "id", clientSecret: "bad" });
   expect(await badToken(hit("https://www.reddit.com/r/x/comments/abc/t/"))).toEqual({ source: "fetch_failed", error: "Reddit token HTTP 401" });
+});
+
+test("renews an expired Reddit token and drops a removed post body", async () => {
+  const tokenCalls: number[] = [];
+  const fetcher = async (url: RequestInfo | URL) => {
+    if (String(url).endsWith("/access_token")) {
+      tokenCalls.push(tokenCalls.length);
+      // 60 s is inside the one-minute early-renewal margin, so the token counts as expired at once.
+      return new Response(JSON.stringify({ access_token: `tok${tokenCalls.length}`, expires_in: 60 }), { status: 200 });
+    }
+    return new Response(JSON.stringify([
+      { data: { children: [{ kind: "t3", data: { title: "Gone", subreddit: "x", author: "op", score: 1, is_self: true, selftext: "[removed]" } }] } },
+      { data: { children: [] } }
+    ]), { status: 200 });
+  };
+  const fetchArticle = createArticleFetcher(undefined, fetcher, 0, { clientId: "id", clientSecret: "s" });
+  const first = await fetchArticle(hit("https://www.reddit.com/r/x/comments/a1/t/"));
+  await fetchArticle(hit("https://www.reddit.com/r/x/comments/b2/t/"));
+  expect(tokenCalls).toHaveLength(2);
+  expect(first.markdown).not.toContain("[removed]");
 });
