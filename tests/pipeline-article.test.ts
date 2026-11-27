@@ -84,3 +84,71 @@ test("spaces consecutive Firecrawl calls by the minimum interval, but not skippe
   expect(times).toHaveLength(2);
   expect(times[1]! - times[0]!).toBeGreaterThanOrEqual(75);
 });
+
+test("reads Reddit post links through Apify, never through Firecrawl", async () => {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify([
+      { type: "post", title: "Rumor", subreddit: "singularity", author: "op", isSelf: true, selfText: "Body & more" },
+      { type: "comment", author: "first", body: "Unscored but first", score: 0, depth: 0 },
+      { type: "comment", author: "reply", body: "Nested reply", score: 500, depth: 1 },
+      { type: "comment", author: "high", body: "Insightful", score: 50, depth: 0 },
+      { type: "comment", author: "gone", body: "[deleted]", score: 99, depth: 0 }
+    ]), { status: 201 });
+  };
+  const fetchArticle = createArticleFetcher("fc-key", fetcher, 0, "apify-token");
+  const result = await fetchArticle(hit("https://www.reddit.com/r/singularity/comments/1y59ef1/rumor_that/"));
+  await fetchArticle(hit("https://redd.it/abc123"));
+
+  expect(result.source).toBe("fetched");
+  const md = result.markdown!;
+  expect(md).toContain("# Rumor");
+  expect(md).toContain("Body & more");
+  expect(md).toContain("u/high");
+  expect(md).toContain("u/first");
+  expect(md.indexOf("u/high")).toBeLessThan(md.indexOf("u/first"));
+  expect(md).not.toContain("Nested reply");
+  expect(md).not.toContain("[deleted]");
+  expect(calls).toHaveLength(2);
+  expect(calls.every(c => c.url.startsWith("https://api.apify.com/v2/acts/automation-lab~reddit-scraper/run-sync-get-dataset-items"))).toBe(true);
+  expect((calls[0]!.init!.headers as Record<string, string>).Authorization).toBe("Bearer apify-token");
+  expect(JSON.parse(String(calls[1]!.init!.body)).urls).toEqual(["https://www.reddit.com/comments/abc123/"]);
+});
+
+test("Reddit links without a token are not sent to Firecrawl, and Apify failures are reported", async () => {
+  const fc = firecrawl(200, { success: true, data: { markdown: "x" } });
+  expect(await createArticleFetcher("fc-key", fc.fetcher, 0)(hit("https://old.reddit.com/r/x/comments/abc/t/"))).toEqual({ source: "disabled" });
+  expect(await createArticleFetcher("fc-key", fc.fetcher, 0)(hit("https://www.reddit.com/r/programming/"))).toEqual({
+    source: "fetch_failed",
+    error: "Not a Reddit post link"
+  });
+  expect(await createArticleFetcher("fc-key", fc.fetcher, 0)(hit("https://i.redd.it/abc.png"))).toEqual({
+    source: "fetch_failed",
+    error: "Not a Reddit post link"
+  });
+  expect(fc.calls).toHaveLength(0);
+
+  const notArray = createArticleFetcher(undefined, async () => new Response("{}", { status: 201 }), 0, "t");
+  expect(await notArray(hit("https://www.reddit.com/r/x/comments/abc/t/"))).toEqual({ source: "fetch_failed", error: "Apify returned no dataset items" });
+
+  const many = createArticleFetcher(undefined, async () => new Response(JSON.stringify([
+    { type: "post", title: "Busy", subreddit: "x", author: "op", isSelf: true, selfText: "" },
+    ...Array.from({ length: 15 }, (_, i) => ({ type: "comment", author: `c${i}`, body: `comment ${i}`, score: 0, depth: 0 }))
+  ]), { status: 201 }), 0, "t");
+  const busy = await many(hit("https://www.reddit.com/r/x/comments/abc/t/"));
+  expect(busy.markdown!.match(/^u\//gm)).toHaveLength(10);
+
+  const unauthorized = createArticleFetcher(undefined, async () => new Response("{}", { status: 401 }), 0, "bad");
+  expect(await unauthorized(hit("https://www.reddit.com/r/x/comments/abc/t/"))).toEqual({ source: "fetch_failed", error: "Apify HTTP 401" });
+
+  const removed = createArticleFetcher(undefined, async () => new Response(JSON.stringify([
+    { type: "post", title: "Gone", subreddit: "x", author: "op", isSelf: true, selfText: "[removed]" }
+  ]), { status: 201 }), 0, "t");
+  const gone = await removed(hit("https://www.reddit.com/r/x/comments/a1/t/"));
+  expect(gone.source).toBe("fetched");
+  expect(gone.markdown).not.toContain("[removed]");
+
+  const empty = createArticleFetcher(undefined, async () => new Response("[]", { status: 201 }), 0, "t");
+  expect(await empty(hit("https://www.reddit.com/r/x/comments/a1/t/"))).toEqual({ source: "fetch_failed", error: "Reddit post not found" });
+});
